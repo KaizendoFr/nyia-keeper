@@ -29,7 +29,21 @@ is_exclusions_cache_valid() {
     
     # Cache file must exist
     [[ -f "$cache_file" ]] || return 1
-    
+
+    # Plan 224: Validate cache key header (version + config content hash)
+    if declare -f compute_cache_key >/dev/null 2>&1; then
+        local expected_key
+        expected_key=$(compute_cache_key "$project_path")
+        local first_line
+        first_line=$(head -n1 "$cache_file" 2>/dev/null)
+        if [[ "$first_line" != "# EXCL_CACHE_V=$expected_key" ]]; then
+            if declare -f print_verbose >/dev/null 2>&1; then
+                print_verbose "Exclusions cache stale (version/config changed), rescanning"
+            fi
+            return 1
+        fi
+    fi
+
     # Check if config has changed (stored in meta file)
     if [[ -f "$cache_meta" ]]; then
         local stored_mtime
@@ -90,8 +104,18 @@ write_exclusions_cache() {
         system_dirs_list="${system_dirs_list%,}"
     fi
     
+    # Compute cache key header for auto-invalidation (Plan 224)
+    local cache_key=""
+    if declare -f compute_cache_key >/dev/null 2>&1; then
+        cache_key=$(compute_cache_key "$project_path")
+    fi
+
     # Write cache file in the format expected by read_cached_exclusions
     {
+        # Cache version header for automatic invalidation (Plan 224)
+        if [[ -n "$cache_key" ]]; then
+            echo "# EXCL_CACHE_V=$cache_key"
+        fi
         echo "excluded_files=$excluded_files_list"
         echo "excluded_dirs=$excluded_dirs_list"
         echo "system_files=$system_files_list"

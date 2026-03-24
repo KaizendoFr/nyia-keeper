@@ -1356,6 +1356,27 @@ print_info() {
     echo -e "\033[0;37m📍 $1\033[0m"
 }
 
+# Print a deprecation warning for legacy paths (non-verbose: always visible on stderr)
+# Dedup: each deprecated path warns only once per session via associative array
+print_deprecation() {
+    local old_path="$1"
+    local new_path="$2"
+
+    # Lazy-init the dedup associative array on first call
+    if ! declare -p _DEPRECATION_SHOWN &>/dev/null; then
+        declare -gA _DEPRECATION_SHOWN
+    fi
+
+    # Dedup: only show once per path per session
+    if [[ -n "${_DEPRECATION_SHOWN[$old_path]+x}" ]]; then
+        return 0
+    fi
+    _DEPRECATION_SHOWN["$old_path"]=1
+
+    echo -e "\033[33m⚠️  DEPRECATED: $old_path → use $new_path instead.\033[0m" >&2
+    echo -e "\033[33m   Run scripts/migrate-to-shared-structure.sh to migrate.\033[0m" >&2
+}
+
 # === PATH & PROJECT MANAGEMENT ===
 resolve_absolute_path() {
     local path="$1"
@@ -1654,6 +1675,7 @@ compose_project_prompt() {
         final_prompt+="# Project Global Overrides"$'\n'
         final_prompt+="$(cat "$shared_prompts/project-overrides.md")"$'\n\n'
     elif [[ -f "$project_prompts/project-overrides.md" ]]; then
+        print_deprecation ".nyiakeeper/prompts/" ".nyiakeeper/shared/prompts/"
         final_prompt+="# Project Global Overrides"$'\n'
         final_prompt+="$(cat "$project_prompts/project-overrides.md")"$'\n\n'
     fi
@@ -1663,6 +1685,7 @@ compose_project_prompt() {
         final_prompt+="# Project ${assistant_type} Specific"$'\n'
         final_prompt+="$(cat "$shared_prompts/${assistant_type}-project.md")"$'\n\n'
     elif [[ -f "$project_prompts/${assistant_type}-project.md" ]]; then
+        print_deprecation ".nyiakeeper/prompts/" ".nyiakeeper/shared/prompts/"
         final_prompt+="# Project ${assistant_type} Specific"$'\n'
         final_prompt+="$(cat "$project_prompts/${assistant_type}-project.md")"$'\n\n'
     fi
@@ -1959,12 +1982,17 @@ get_creds_env_args() {
     local project_path="${1:-$(pwd)}"
     # Check private path first, fall back to legacy path
     local creds_file="$project_path/.nyiakeeper/private/creds/env"
+    local _using_legacy_creds=false
     if [[ ! -f "$creds_file" ]]; then
         creds_file="$project_path/.nyiakeeper/creds/env"
+        _using_legacy_creds=true
     fi
     local env_args=()
 
     if [[ -f "$creds_file" ]]; then
+        if [[ "$_using_legacy_creds" == "true" ]]; then
+            print_deprecation ".nyiakeeper/creds/" ".nyiakeeper/private/creds/"
+        fi
         print_verbose "Loading environment variables from $creds_file"
         
         # Parse .creds/env and pass all exported variables
@@ -2026,10 +2054,15 @@ create_docker_env_file() {
     
     # Add credentials from creds/env file (private path first, legacy fallback)
     local creds_file="$project_path/.nyiakeeper/private/creds/env"
+    local _using_legacy_creds=false
     if [[ ! -f "$creds_file" ]]; then
         creds_file="$project_path/.nyiakeeper/creds/env"
+        _using_legacy_creds=true
     fi
     if [[ -f "$creds_file" ]]; then
+        if [[ "$_using_legacy_creds" == "true" ]]; then
+            print_deprecation ".nyiakeeper/creds/" ".nyiakeeper/private/creds/"
+        fi
         print_verbose "Loading credentials from $creds_file"
         # Extract just the VAR=value part from -e VAR=value arguments
         while IFS= read -r env_arg; do
@@ -2963,12 +2996,16 @@ login_assistant() {
 ) &
 watcher_pid=\$!
 
+# Defensive trap: ensure watcher is cleaned up on any exit path (macOS hang fix)
+trap 'kill \$watcher_pid 2>/dev/null || true; wait \$watcher_pid 2>/dev/null || true' EXIT INT TERM
+
 # Run the actual login command (normal claude)
 $login_cmd_str
 login_exit=\$?
 
-# Kill watcher
+# Kill watcher and wait for it to avoid orphaned processes holding the TTY (macOS hang fix)
 kill \$watcher_pid 2>/dev/null || true
+wait \$watcher_pid 2>/dev/null || true
 
 # Final copy to catch all updates
 if [[ \$login_exit -eq 0 && -f "/home/node/.claude.json" && ! -L "/home/node/.claude.json" ]]; then

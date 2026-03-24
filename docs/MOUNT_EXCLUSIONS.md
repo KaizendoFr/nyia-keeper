@@ -194,18 +194,45 @@ rm .nyiakeeper/.excluded-files.cache
 
 The next session will perform a fresh scan.
 
-## Git History Protection
+## Security Model
 
-Mount exclusions protect the filesystem inside the container by replacing excluded files with placeholder stubs. However, `.git/` is mounted read-write (needed for git operations), so files committed to git history may still be accessible via git commands:
+Mount exclusions protect the filesystem inside the container by replacing excluded files with placeholder stubs. Understanding what they protect — and what they don't — is important for managing secrets effectively.
 
-- `git show HEAD:.env` — shows committed content
-- `git log -p -- .env` — shows diff history with content
-- `git cat-file -p <blob-hash>` — reads raw git objects
+### What exclusions protect
 
-**Mitigations:**
+Files that are **not in git** and should not be: `.env` files listed in `.gitignore`, local credential files, private configs that were never committed. For these files, the protection is effective:
 
-1. **Awareness**: The `lockdown` command and all exclusion commands show a warning footer for git-backed projects.
-2. **Runtime enforcement**: A git wrapper script (when installed) intercepts dangerous read commands targeting excluded paths.
-3. **System prompt guidance**: AI assistants are instructed to never access excluded files via git history.
+| Layer | What it does | Protects against |
+|-------|-------------|-----------------|
+| Placeholder stubs | Replaces real files with empty stubs in the container | AI reading file content |
+| Skip-worktree | Hides placeholders from `git status` and `git add` | Accidental staging of stubs |
+| Pre-commit hook | Blocks commits containing placeholder marker text | Accidental commit of stubs |
+| System prompt | Instructs AI not to access excluded paths or their git history | AI curiosity |
 
-For maximum security, avoid committing sensitive files to git in the first place. Use `.gitignore` alongside mount exclusions.
+The AI never sees the real content and cannot commit the placeholder — the combination provides effective protection.
+
+### What exclusions don't protect
+
+Files that were **ever committed to git history**. The `.git/` directory is mounted read-write inside the container (required for branch operations, commits, pushes, etc.). If a sensitive file was committed even once, the AI can access the original content through many git commands:
+
+```bash
+git show HEAD:.env          # Shows committed content
+git checkout -- .env        # Restores real file, replacing placeholder
+git restore .env            # Same as above
+git log -p -- .env          # Shows full diff history with content
+git reset --hard            # Restores all files from last commit
+```
+
+This is a **fundamental limitation** of any system that mounts `.git/` read-write. Blocking individual git commands is impractical — git has too many ways to surface file content (`checkout`, `restore`, `reset`, `merge`, `rebase`, `cherry-pick`, `stash pop`, etc.), and blocking them would break normal git workflow.
+
+### User responsibility for git history
+
+If a secret was committed to git, you have several options:
+
+- **Rewrite history**: Tools like `git filter-repo` or `BFG Repo-Cleaner` can permanently remove sensitive files from all commits.
+- **Git-level encryption**: Some tools encrypt file content at the git blob level using clean/smudge filters. With such a setup, the working tree has decrypted files (which exclusions protect), but the `.git/` object store has encrypted blobs — so `git show HEAD:.env` returns encrypted data that is useless to the AI. This provides full coverage when combined with mount exclusions. Tool choice is up to you.
+- **Rotate secrets**: If a secret was exposed in git history, consider it compromised and rotate it regardless of other mitigations.
+
+### Best practice
+
+Avoid committing sensitive files to git in the first place. Use `.gitignore` alongside mount exclusions — this way, exclusions protect the working-tree copy and there is no git history to worry about.

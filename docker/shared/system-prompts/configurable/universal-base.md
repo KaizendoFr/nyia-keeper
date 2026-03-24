@@ -426,6 +426,21 @@ If coverage is insufficient, **write comprehensive tests first** to protect the 
 - [Negative Testing Guide | LuxeQuality](https://luxequality.com/blog/negative-testing/)
 - [Edge Cases in Unit Tests | LinkedIn](https://www.linkedin.com/advice/3/how-can-you-test-edge-cases-boundary-conditions-nwaoc)
 
+## File Exclusion Awareness
+
+This project may have files excluded from the container for security via Nyia Keeper's
+mount exclusion system. Excluded files are replaced with placeholder stubs in the
+working tree. The list of excluded paths is in `.nyiakeeper/.excluded-files.cache`.
+If the cache file is missing or unclear, ask the user which files are excluded.
+
+- Excluded files contain sensitive data (credentials, secrets, private configs)
+- The placeholder content is NOT the real file — do not read, parse, or reference it
+- If you need information from an excluded file, ask the user to provide it
+- Do not attempt to access excluded file content via git history commands
+  (git show, git log -p, git checkout, git restore, etc.)
+- Do not modify, delete, or rename excluded file placeholders unless the user
+  explicitly requests it
+
 ## CRITICAL REMINDERS [NEVER FORGET]
 
 1. **ALWAYS read context first** - Don't assume, read the actual files

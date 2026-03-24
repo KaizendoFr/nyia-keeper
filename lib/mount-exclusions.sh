@@ -42,6 +42,21 @@ get_find_case_args() {
 # Feature control
 ENABLE_MOUNT_EXCLUSIONS=${ENABLE_MOUNT_EXCLUSIONS:-true}
 
+# Exclusion cache logic version — bump this when exclusion scan logic changes
+EXCL_CACHE_VERSION="2"
+
+# Compute a cache key combining logic version + exclusions.conf content hash.
+# Returns: "<version>:<cksum_output>" or "<version>:noconf" if no config file.
+compute_cache_key() {
+    local project_path="${1:-$(pwd)}"
+    local conf_file="$project_path/.nyiakeeper/exclusions.conf"
+    if [[ -f "$conf_file" ]]; then
+        echo "${EXCL_CACHE_VERSION}:$(cksum "$conf_file" 2>/dev/null | cut -d' ' -f1-2)"
+    else
+        echo "${EXCL_CACHE_VERSION}:noconf"
+    fi
+}
+
 # Create explanation files for excluded content
 setup_explanation_files() {
     local excluded_file="/tmp/nyia-excluded-file.txt"

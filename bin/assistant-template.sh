@@ -344,10 +344,15 @@ WORKSPACE_TEMPLATE
 
     # Source credentials if available (private path first, legacy fallback)
     local creds_file="$PROJECT_PATH/.nyiakeeper/private/creds/env"
+    local _using_legacy_creds=false
     if [[ ! -f "$creds_file" ]]; then
         creds_file="$PROJECT_PATH/.nyiakeeper/creds/env"
+        _using_legacy_creds=true
     fi
     if [[ -f "$creds_file" ]]; then
+        if [[ "$_using_legacy_creds" == "true" ]]; then
+            print_deprecation ".nyiakeeper/creds/" ".nyiakeeper/private/creds/"
+        fi
         source "$creds_file"
         print_verbose "Loaded credentials from $creds_file"
     else
@@ -491,6 +496,7 @@ show_assistant_status() {
         echo "  ✓ Project shared overrides active"
         ((active_count++)) || true
     elif [[ -f "$PROJECT_PATH/.nyiakeeper/prompts/project-overrides.md" ]]; then
+        print_deprecation ".nyiakeeper/prompts/" ".nyiakeeper/shared/prompts/"
         echo "  ✓ Project overrides active"
         ((active_count++)) || true
     fi
@@ -499,6 +505,7 @@ show_assistant_status() {
         echo "  ✓ Project shared ${config_assistant_name}-specific overrides active"
         ((active_count++)) || true
     elif [[ -f "$PROJECT_PATH/.nyiakeeper/prompts/${config_assistant_name}-project.md" ]]; then
+        print_deprecation ".nyiakeeper/prompts/" ".nyiakeeper/shared/prompts/"
         echo "  ✓ Project ${config_assistant_name}-specific overrides active"
         ((active_count++)) || true
     fi

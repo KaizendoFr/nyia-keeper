@@ -23,30 +23,30 @@ get_agent_dirs() {
     case "$assistant_cli" in
         claude)
             project_dir="$project_path/.claude/agents"
-            global_dir="$nyiakeeper_home/claude/agents"
             ;;
         opencode)
             project_dir="$project_path/.opencode/agents"
-            global_dir="$nyiakeeper_home/opencode/agents"
             ;;
         vibe)
             project_dir="$project_path/.vibe/agents"
-            global_dir="$nyiakeeper_home/vibe/agents"
             ;;
         codex)
             # Codex uses config-based agents, not file-based
             project_dir=""
-            global_dir=""
             ;;
         *)
             project_dir=""
-            global_dir=""
             ;;
     esac
 
     # Project-shared agents (universal, all assistants except codex/gemini)
     if [[ -n "$project_dir" ]]; then
         shared_dir="$project_path/.nyiakeeper/shared/agents"
+    fi
+
+    # Global is the raw source (assistant-agnostic), not propagation target
+    if [[ -n "$project_dir" ]]; then
+        global_dir="$nyiakeeper_home/agents"
     fi
 
     # Team agents are assistant-agnostic (same pattern as skill-resolution.sh)
