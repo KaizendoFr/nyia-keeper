@@ -701,6 +701,19 @@ _get_runtime_image_tag() {
         fi
     fi
 
+    # VERSION-based fallback (Plan 227): when no CHANNEL file exists, infer
+    # channel from installed version. Matches CI tagging: *-alpha.* → alpha.
+    if [[ -z "$channel" ]]; then
+        local _version_file="${_config_root:-${XDG_CONFIG_HOME:-$HOME/.config}/nyiakeeper}/VERSION"
+        if [[ -f "$_version_file" ]]; then
+            local _installed_ver
+            _installed_ver=$(tr -d '[:space:]' < "$_version_file" | head -1)
+            if [[ "$_installed_ver" == *-alpha.* ]]; then
+                channel="alpha"
+            fi
+        fi
+    fi
+
     case "${channel:-latest}" in
         alpha)   echo "alpha" ;;
         latest)  echo "latest" ;;

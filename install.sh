@@ -27,6 +27,9 @@ CHANNELS_MANIFEST_URL="https://raw.githubusercontent.com/${PUBLIC_REPO}/main/cha
 # Detect selected channel (used to write CHANNEL state file after install).
 # Default is "latest" when no explicit channel is chosen.
 SELECTED_CHANNEL="latest"
+# Track whether the user explicitly chose a channel (Plan 227).
+# When false, channel is inferred from the resolved version tag after download.
+EXPLICIT_CHANNEL=false
 
 RELEASE_TYPE=""
 
@@ -36,21 +39,23 @@ if [[ -n "${1:-}" ]]; then
     # If it looks like a channel name (no dots/digits at start), treat as channel
     if [[ "$ARG_VAL" =~ ^(latest|alpha)$ ]]; then
         SELECTED_CHANNEL="$ARG_VAL"
+        EXPLICIT_CHANNEL=true
         RELEASE_TYPE="channel:$ARG_VAL"
         echo "📦 Installing channel: $ARG_VAL"
     else
         RELEASE_TYPE="tags/$ARG_VAL"
-        SELECTED_CHANNEL=""   # exact pin — no channel tracking
+        SELECTED_CHANNEL=""   # exact pin — inferred later from version
         echo "📦 Installing specific version: $ARG_VAL"
     fi
 elif [[ -n "${NYIA_VERSION:-}" ]]; then
     # Explicit version env var wins
     RELEASE_TYPE="tags/$NYIA_VERSION"
-    SELECTED_CHANNEL=""   # exact pin — no channel tracking
+    SELECTED_CHANNEL=""   # exact pin — inferred later from version
     echo "📦 Installing specific version: $NYIA_VERSION"
 elif [[ -n "${NYIA_CHANNEL:-}" ]]; then
     # Channel env var
     SELECTED_CHANNEL="$NYIA_CHANNEL"
+    EXPLICIT_CHANNEL=true
     RELEASE_TYPE="channel:$NYIA_CHANNEL"
     echo "📦 Installing channel: $NYIA_CHANNEL"
 else
@@ -80,7 +85,7 @@ if [[ "$RELEASE_TYPE" == channel:* ]]; then
         echo "❌ Could not resolve channel '$CHANNEL_NAME' from manifest"
         echo "   Manifest URL: $CHANNELS_MANIFEST_URL"
         echo "   Falling back to newest published release..."
-        RELEASE_TYPE="tags/v0.1.0-alpha.79"
+        RELEASE_TYPE="tags/v0.1.0-alpha.80"
     else
         echo "📦 Channel '$CHANNEL_NAME' resolved to: $TAG_NAME"
     fi
@@ -117,6 +122,19 @@ elif [[ "$RELEASE_TYPE" == tags/* && -z "${TAG_NAME:-}" ]]; then
         echo "   URL: $RELEASE_URL"
         echo "   Please verify this version exists"
         exit 1
+    fi
+fi
+
+# --- Channel inference from resolved version (Plan 227) ---
+# When no explicit channel was chosen, infer from the version tag pattern.
+# Matches CI pipeline logic: *-alpha.* → alpha channel, else → latest channel.
+if [[ "$EXPLICIT_CHANNEL" == "false" && -n "${TAG_NAME:-}" ]]; then
+    if [[ "$TAG_NAME" == *-alpha.* ]]; then
+        SELECTED_CHANNEL="alpha"
+        echo "📡 Inferred channel 'alpha' from version: $TAG_NAME"
+    elif [[ -z "$SELECTED_CHANNEL" ]]; then
+        # Exact-version install of a non-alpha tag — default to latest
+        SELECTED_CHANNEL="latest"
     fi
 fi
 

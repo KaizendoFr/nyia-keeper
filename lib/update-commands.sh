@@ -190,7 +190,7 @@ update_install() {
     if [[ ! -t 0 ]] && [[ ! -t 1 ]]; then
         echo "Update requires an interactive terminal."
         echo "To update manually, download the latest release from:"
-        echo "  https://github.com/KaizendoFr/nyiakeeper/releases"
+        echo "  https://github.com/KaizendoFr/nyia-keeper/releases"
         return 1
     fi
 

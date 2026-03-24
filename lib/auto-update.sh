@@ -12,7 +12,7 @@ _AUTO_UPDATE_LOADED=1
 
 readonly UPDATE_CHECK_INTERVAL=3600  # 1 hour in seconds
 readonly UPDATE_CURL_TIMEOUT=5       # seconds
-readonly GITHUB_REPO="KaizendoFr/nyiakeeper"
+readonly GITHUB_REPO="KaizendoFr/nyia-keeper"
 readonly GITHUB_API="https://api.github.com/repos/${GITHUB_REPO}"
 readonly GITHUB_RELEASES_URL="https://github.com/${GITHUB_REPO}/releases"
 readonly MAX_RELEASE_NOTES_LINES=20
@@ -176,6 +176,19 @@ set_installed_channel() {
     echo "$channel" > "$channel_file"
 }
 
+# Infer the update channel from a version tag string.
+# Matches the CI pipeline tagging logic (pipeline.yml:288-293):
+#   version contains "-alpha." → "alpha"
+#   everything else            → "latest"
+_infer_channel_from_version() {
+    local version="${1:-}"
+    if [[ "$version" == *-alpha.* ]]; then
+        echo "alpha"
+    else
+        echo "latest"
+    fi
+}
+
 # --- Channel Manifest ---
 # Resolves a channel name to an immutable release tag via the public channels.json manifest.
 # Returns the tag on stdout.  Returns 1 (empty output) on failure.
@@ -220,19 +233,18 @@ fetch_latest_version() {
         installed_channel=$(get_installed_channel)
     fi
 
-    # --- Channel manifest path ---
-    # For "alpha" channel: resolve exclusively through the manifest so the user
-    # stays on the maintainer-approved build, not the newest published build.
-    if [[ "$installed_channel" == "$CHANNEL_ALPHA" ]]; then
-        local manifest_tag
-        manifest_tag=$(fetch_channel_version "$CHANNEL_ALPHA") || manifest_tag=""
-        if [[ -n "$manifest_tag" ]]; then
-            _write_update_cache "$manifest_tag" "$current_version"
-            echo "$manifest_tag"
-            return 0
-        fi
-        # Manifest unreachable: fall through to GitHub API fallback
+    # --- Channel manifest path (all channels) ---
+    # Try the curated channels.json manifest first for ALL channels.
+    # "latest" = promoted stable, "alpha" = bleeding edge.
+    # Unknown/invalid channels: manifest returns empty → falls through to GitHub API.
+    local manifest_tag
+    manifest_tag=$(fetch_channel_version "$installed_channel") || manifest_tag=""
+    if [[ -n "$manifest_tag" ]]; then
+        _write_update_cache "$manifest_tag" "$current_version"
+        echo "$manifest_tag"
+        return 0
     fi
+    # Manifest unreachable or channel key not found: fall through to GitHub API fallback
 
     # --- GitHub API path (for "latest" channel and fallback) ---
 
@@ -363,14 +375,26 @@ cli_targeted_update() {
         echo ""
 
         local answer
-        read -r -p "Proceed? [y/N] " answer < /dev/tty
+        if [[ -n "${NYIA_UPDATE_CONFIRM:-}" ]]; then
+            answer="$NYIA_UPDATE_CONFIRM"
+        else
+            read -r -p "Proceed? [y/N] " answer < /dev/tty
+        fi
         if [[ ! "$answer" =~ ^[Yy] ]]; then
             echo "Update cancelled."
             return 0
         fi
     fi
 
-    perform_update "$target_tag"
+    # Infer channel from target version so CHANNEL file stays coherent (Plan 227).
+    # Only when an explicit target is given — no-target updates preserve existing channel.
+    if [[ -n "$target_tag" ]]; then
+        local _inferred_ch
+        _inferred_ch=$(_infer_channel_from_version "$target_tag")
+        perform_update "$target_tag" "$_inferred_ch"
+    else
+        perform_update "$target_tag"
+    fi
 }
 
 # --- Version Comparison ---
