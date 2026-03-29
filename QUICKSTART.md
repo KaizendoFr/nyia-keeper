@@ -86,13 +86,14 @@ See [docs/BRANCH_MANAGEMENT.md](docs/BRANCH_MANAGEMENT.md) for detailed workflow
 
 ## Built-in Skills
 
-All assistants include 4 built-in skills (following the [Agent Skills](https://agentskills.io) standard):
+All assistants include 5 built-in skills (following the [Agent Skills](https://agentskills.io) standard):
 
 | Skill | Command | Purpose |
 |-------|---------|---------|
 | **kickoff** | `/kickoff` | Start a session - reconstructs state from `.nyiakeeper/` files |
-| **do-a-plan** | `/do-a-plan` | Create a phased execution plan with atomic steps |
-| **pair-review** | `/pair-review` | Architect-level review between agents (e.g., Claude reviews Codex's plan) |
+| **make-a-plan** | `/make-a-plan` | Create a phased execution plan with atomic steps |
+| **implement-plan** | `/implement-plan` | Execute a plan with pre-flight validation, per-step verification, and regression detection |
+| **plan-review** | `/plan-review` | Architect-level plan review between agents (e.g., Claude reviews Codex's plan) |
 | **checkpoint** | `/checkpoint` | Save session state before context compaction or shutdown |
 
 Skills are invoked as slash commands within your assistant session.

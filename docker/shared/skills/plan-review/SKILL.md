@@ -1,25 +1,25 @@
 ---
-name: pair-review
-description: Review a plan or respond to a review as a pair-programming architect. Supports round-trip workflows between assistants with human-in-the-loop discussion. Use /pair-review plan {N} to review, /pair-review respond {N} to respond to a review.
+name: plan-review
+description: Review a plan or respond to a review as an architect. Supports round-trip review workflows between assistants with human-in-the-loop discussion. Use /plan-review plan {N} to review, /plan-review respond {N} to respond to a review.
 ---
 
-# Pair-Review - Architect Review Skill
+# Plan-Review - Architect Plan Review Skill
 
-Supports two modes for round-trip review workflows between assistants.
+Supports two modes for round-trip plan review workflows between assistants.
 
 ## A) Argument Parsing
 
 Parse the arguments to determine mode and plan reference:
 
 ```
-/pair-review [subcommand] <plan-ref> [as <lens>]
+/plan-review [subcommand] <plan-ref> [as <lens>]
 
 subcommand:
   "plan" or omitted  → PLAN MODE (reviewer writes/updates review)
   "respond"          → RESPOND MODE (plan author reads review, discusses, updates plan)
 
 plan-ref:
-  Number (e.g., "121")     → find .nyiakeeper/plans/121-*.md (exclude pair-review-* files)
+  Number (e.g., "121")     → find .nyiakeeper/plans/121-*.md (exclude plan-review-* and pair-review-* files)
   File path                → use directly
 
 lens (optional — plan mode only, shapes review perspective):
@@ -33,9 +33,17 @@ lens (optional — plan mode only, shapes review perspective):
 ## B) Load Context (both modes)
 
 1. Resolve plan-ref to an actual plan file. Read it completely.
-2. Find review files matching: `pair-review-*-plan-{N}-*.md` in `.nyiakeeper/plans/`
+2. Find review files matching: `plan-review-*-plan-{N}-*.md` OR `pair-review-*-plan-{N}-*.md` in `.nyiakeeper/plans/` (search both prefixes for backward compatibility with existing review files)
 3. Determine round number: count `## Round` headers in existing review file. Next = count + 1. No file = Round 1.
 4. Identify yourself (your assistant name) from context or environment.
+
+### Meta-Plan Detection
+
+If the plan file is a meta-plan (contains a `## Subplans` table):
+1. Read the meta-plan AND all referenced subplan files (`{N}a-*.md`, `{N}b-*.md`, etc.)
+2. Review proceeds in two layers:
+   - **Per-subplan**: each subplan gets normal review (required sections, atomicity, risks)
+   - **Cross-cutting**: review concerns that span subplans (see Section C)
 
 ## C) PLAN MODE — Write or Update Review
 
@@ -64,12 +72,24 @@ Perform a full review with these focus areas:
 
 **Identify:** What's solid, issues/risks (High/Med/Low), missing tests, non-atomic steps.
 
+### Meta-Plan Cross-Cutting Review (in addition to normal review)
+
+When reviewing a meta-plan, also check:
+- **Completeness**: no work falls between phases (gap analysis)
+- **Dependencies**: phase ordering is correct (B really needs A first?)
+- **Consistency**: assumptions in subplan A don't contradict subplan C
+- **No duplication**: same work isn't done in multiple subplans
+- **Parallelizability**: phases marked parallel truly share no resources
+- **Integration points**: how phases reconnect (shared files, test suites)
+
+Output one review file with per-subplan sections plus a cross-cutting section.
+
 Discuss findings with the human before writing.
-Write to: `.nyiakeeper/plans/pair-review-{me}-for-{target}-plan-{N}-{slug}.md`
+Write to: `.nyiakeeper/plans/plan-review-{me}-for-{target}-plan-{N}-{slug}.md`
 
 Use this format:
 ```markdown
-# Pair Review: Plan {N} - {title}
+# Plan Review: Plan {N} - {title}
 **Reviewer**: {me} | **For**: {target} | **Plan**: {filename}
 
 ## Round 1 — {date}
@@ -124,7 +144,7 @@ You are the **plan author**. Someone else reviewed your plan.
 
 ### Steps
 
-1. **Find the review**: Look for `pair-review-*-for-{me}-plan-{N}-*.md`
+1. **Find the review**: Look for `plan-review-*-for-{me}-plan-{N}-*.md` or `pair-review-*-for-{me}-plan-{N}-*.md` (search both prefixes for backward compatibility with existing review files)
    - If multiple files match, use most recently modified. If ambiguous, ask the human.
    - If no review found, inform the human and stop.
 
@@ -147,7 +167,7 @@ You are the **plan author**. Someone else reviewed your plan.
    Add at the bottom of the plan: `## Updates after Round {N} review\n- [summary of changes]`
 
 6. **Guide next step**: Tell the human:
-   "Plan updated. To continue the review cycle, run `/pair-review plan {N}` on {reviewer}'s side."
+   "Plan updated. To continue the review cycle, run `/plan-review plan {N}` on {reviewer}'s side."
 
 ## F) Review Lenses (optional)
 
@@ -159,12 +179,13 @@ When a lens is specified, focus primarily through that lens while covering base 
 | **risk** | Edge cases, safety, undo | What goes wrong? How to reverse? |
 | **user** | Docs, help, UX, onboarding | User understands? Help updated? |
 | **ops** | Deploy, dist, verify, monitor | How shipped? How verified? |
-Default: **architect**. Multiple: `/pair-review plan 213 as risk,user`
+Default: **architect**. Multiple: `/plan-review plan 213 as risk,user`
 
 ## G) Key Rules
 
 - **Human-in-the-loop**: ALWAYS discuss before writing in both modes. Never auto-write.
 - **Confirmation gate**: In respond mode, NEVER edit the plan without explicit "yes" from the human.
-- **Backward compatible**: `/pair-review 121` (no subcommand) = plan mode.
+- **Backward compatible**: `/plan-review 121` (no subcommand) = plan mode.
 - **Delta = LLM comparison**: Compare plan content vs last review content. No git diff needed.
-- **One review file per pair**: `pair-review-{from}-for-{target}-plan-{N}-{slug}.md`. Rounds append to the same file.
+- **One review file per pair**: `plan-review-{from}-for-{target}-plan-{N}-{slug}.md`. Rounds append to the same file.
+- **Legacy file discovery**: Always search for both `plan-review-*` and `pair-review-*` prefixes when looking for existing review files, so that the 120+ existing `pair-review-*` files remain discoverable.

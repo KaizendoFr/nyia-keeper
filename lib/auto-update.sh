@@ -240,7 +240,6 @@ fetch_latest_version() {
     local manifest_tag
     manifest_tag=$(fetch_channel_version "$installed_channel") || manifest_tag=""
     if [[ -n "$manifest_tag" ]]; then
-        _write_update_cache "$manifest_tag" "$current_version"
         echo "$manifest_tag"
         return 0
     fi
@@ -279,8 +278,6 @@ fetch_latest_version() {
     fi
 
     if [[ -n "$tag" ]]; then
-        # Update cache
-        _write_update_cache "$tag" "$current_version"
         echo "$tag"
     fi
     # Empty output on failure (silent fail)
@@ -525,10 +522,16 @@ show_update_prompt() {
     echo ""
     echo "Full release: ${GITHUB_RELEASES_URL}/tag/${new_version}"
     echo ""
+    echo "----------------------------------------------------------------"
+    echo ""
 
     # Read from /dev/tty for pipe safety
     local answer=""
-    read -r -p "Update now? [y/N] " answer < /dev/tty 2>/dev/null || answer="n"
+    if ! read -r -p "Update now? [y/N] " answer < /dev/tty 2>/dev/null; then
+        echo "" >&2
+        echo "Update prompt unavailable (no TTY), skipping." >&2
+        return 1
+    fi
 
     case "$answer" in
         [yY]|[yY][eE][sS]) return 0 ;;
@@ -626,6 +629,8 @@ perform_update() {
             release_update_lock
             return 1
         fi
+        # User explicitly ran update — write cache immediately
+        _write_update_cache "$target_tag" "$current"
     fi
 
     # Determine install directories
@@ -735,9 +740,10 @@ perform_update() {
     rm -rf "${bin_dir}.old" "${lib_dir}.old"
 
     # Run setup.sh if present in staging (handles path patching etc.)
-    # Must cd into staging because setup.sh uses relative bin/ and lib/ paths
+    # After the swap, bin/ and lib/ live under the install root (parent of bin_dir).
+    # setup.sh expects to see bin/ and lib/ as siblings in its CWD, so cd there.
     if [[ -f "$staging_dir/setup.sh" ]]; then
-        (cd "$staging_dir" && bash ./setup.sh) 2>/dev/null || true
+        (cd "$(dirname "$bin_dir")" && bash "$staging_dir/setup.sh") 2>/dev/null || true
     fi
 
     # Persist channel selection so future update checks stay on the same channel.
@@ -745,11 +751,17 @@ perform_update() {
         set_installed_channel "$channel_context" 2>/dev/null || true
     fi
 
-    # Verify version
+    # Verify version — assert installed version matches the target
     local new_version
     new_version=$(get_installed_version 2>/dev/null) || new_version=""
-    if [[ -n "$new_version" ]]; then
+    if [[ -n "$new_version" && "$new_version" == "$target_tag" ]]; then
         echo "Successfully updated to ${new_version}"
+    elif [[ -n "$new_version" && "$new_version" != "$target_tag" ]]; then
+        echo "Error: Update failed — installed version is still ${new_version} (expected ${target_tag})" >&2
+        _update_cleanup
+        rm -rf "${bin_dir}.old" "${lib_dir}.old"
+        release_update_lock
+        return 1
     else
         echo "Update installed. Please restart your terminal."
     fi
@@ -917,9 +929,12 @@ check_for_updates_if_due() {
     # Compare
     if compare_versions "$current_version" "$latest_version"; then
         if show_update_prompt "$current_version" "$latest_version"; then
+            # User accepted — write cache so throttle window starts now
+            _write_update_cache "$latest_version" "$current_version"
             # Pass the installed channel so perform_update preserves channel state.
             perform_update "$latest_version" "$installed_channel"
         else
+            # User declined — do NOT write cache, so prompt reappears on next eligible run
             echo "Update skipped. Run 'nyia update install' to update later."
         fi
     fi

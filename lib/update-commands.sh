@@ -123,13 +123,17 @@ update_list() {
     latest_tag=$(fetch_channel_version "$CHANNEL_LATEST" 2>/dev/null) || latest_tag="(unavailable)"
     alpha_tag=$(fetch_channel_version "$CHANNEL_ALPHA" 2>/dev/null) || alpha_tag="(unavailable)"
 
-    local latest_marker="" alpha_marker=""
-    [[ "$current_channel" == "latest" ]] && latest_marker=" <-- active"
-    [[ "$current_channel" == "alpha" ]] && alpha_marker=" <-- active"
+    # Show installed version in the row matching the active channel
+    local latest_installed="" alpha_installed=""
+    if [[ "$current_channel" == "latest" && -n "$current_version" ]]; then
+        latest_installed="$current_version"
+    elif [[ "$current_channel" == "alpha" && -n "$current_version" ]]; then
+        alpha_installed="$current_version"
+    fi
 
-    printf "  %-10s %-28s %s\n" "CHANNEL" "VERSION" ""
-    printf "  %-10s %-28s %s\n" "latest" "$latest_tag" "$latest_marker"
-    printf "  %-10s %-28s %s\n" "alpha" "$alpha_tag" "$alpha_marker"
+    printf "  %-10s %-28s %s\n" "CHANNEL" "LATEST" "INSTALLED"
+    printf "  %-10s %-28s %s\n" "latest" "$latest_tag" "$latest_installed"
+    printf "  %-10s %-28s %s\n" "alpha" "$alpha_tag" "$alpha_installed"
     echo ""
 
     # Show recent releases
@@ -162,6 +166,9 @@ update_check() {
         echo "Could not determine latest version. Check your internet connection."
         return 1
     fi
+
+    # User explicitly asked to check — write cache immediately (throttle is appropriate)
+    _write_update_cache "$latest_version" "$current_version"
 
     echo "  Latest:    $latest_version"
     echo ""
