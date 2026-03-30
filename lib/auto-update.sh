@@ -126,6 +126,13 @@ CURRENT_TAG=${current_tag}
 EOF
 }
 
+# Write only LAST_CHECK timestamp — used on auto-update decline so the throttle
+# still applies (prevents per-command spam) without caching version info.
+_write_check_timestamp() {
+    local cache_file="${NYIAKEEPER_HOME:?}/.update-cache"
+    echo "LAST_CHECK=$(date +%s)" > "$cache_file"
+}
+
 # --- Channel State ---
 # Persists the user's selected update channel separately from the installed version.
 # File: $NYIAKEEPER_HOME/CHANNEL   (single line: "latest", "alpha", or empty = latest)
@@ -736,15 +743,23 @@ perform_update() {
         return 1
     fi
 
-    # Clean up .old dirs
-    rm -rf "${bin_dir}.old" "${lib_dir}.old"
-
     # Run setup.sh if present in staging (handles path patching etc.)
     # After the swap, bin/ and lib/ live under the install root (parent of bin_dir).
     # setup.sh expects to see bin/ and lib/ as siblings in its CWD, so cd there.
+    # NOTE: .old dirs kept until AFTER setup.sh succeeds, as additional recovery option.
     if [[ -f "$staging_dir/setup.sh" ]]; then
-        (cd "$(dirname "$bin_dir")" && bash "$staging_dir/setup.sh") 2>/dev/null || true
+        if ! (cd "$(dirname "$bin_dir")" && bash "$staging_dir/setup.sh") 2>/dev/null; then
+            echo "Error: setup.sh failed. Restoring from backup..." >&2
+            _restore_from_backup "$bin_dir" "$lib_dir"
+            rm -rf "${bin_dir}.old" "${lib_dir}.old"
+            _update_cleanup
+            release_update_lock
+            return 1
+        fi
     fi
+
+    # Clean up .old dirs only after setup.sh succeeds
+    rm -rf "${bin_dir}.old" "${lib_dir}.old"
 
     # Persist channel selection so future update checks stay on the same channel.
     if [[ -n "$channel_context" ]]; then
@@ -758,8 +773,9 @@ perform_update() {
         echo "Successfully updated to ${new_version}"
     elif [[ -n "$new_version" && "$new_version" != "$target_tag" ]]; then
         echo "Error: Update failed — installed version is still ${new_version} (expected ${target_tag})" >&2
+        echo "Restoring previous version..." >&2
+        _restore_from_backup "$bin_dir" "$lib_dir"
         _update_cleanup
-        rm -rf "${bin_dir}.old" "${lib_dir}.old"
         release_update_lock
         return 1
     else
@@ -767,7 +783,6 @@ perform_update() {
     fi
 
     _update_cleanup
-    rm -rf "${bin_dir}.old" "${lib_dir}.old"
     release_update_lock
     return 0
 }
@@ -934,7 +949,9 @@ check_for_updates_if_due() {
             # Pass the installed channel so perform_update preserves channel state.
             perform_update "$latest_version" "$installed_channel"
         else
-            # User declined — do NOT write cache, so prompt reappears on next eligible run
+            # User declined — write only the check timestamp so throttle prevents
+            # per-command spam, but don't cache version info. Re-prompts after interval.
+            _write_check_timestamp
             echo "Update skipped. Run 'nyia update install' to update later."
         fi
     fi

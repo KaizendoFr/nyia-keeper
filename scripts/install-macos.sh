@@ -24,7 +24,7 @@ PUBLIC_REPO="KaizendoFr/nyia-keeper"
 TARBALL_NAME="nyiakeeper-runtime.tar.gz"
 MIN_MACOS_VERSION="13"
 # Replaced at build time by preprocess-runtime.sh (same pattern as install.sh)
-RELEASE_TAG="v0.1.0-alpha.83"
+RELEASE_TAG="v0.1.0-alpha.85"
 
 # Version resolution: $1 > $NYIA_VERSION > build-time RELEASE_TAG > "latest"
 if [[ -n "${1:-}" ]]; then
