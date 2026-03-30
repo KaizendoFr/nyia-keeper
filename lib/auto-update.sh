@@ -702,64 +702,27 @@ perform_update() {
     echo "Backing up current installation..."
     backup_current_install "$bin_dir" "$lib_dir"
 
-    # Staged swap with .old recovery
+    # Run setup.sh from staging to install new version.
+    # setup.sh handles: bin/lib copy, docker/ copy, config, VERSION, path patching, skill seeding.
+    # It expects CWD to contain bin/, lib/, docker/, config/, VERSION — the full tarball layout.
+    # Previous approach (staged swap + setup.sh) was broken: swap moved bin/lib out of staging
+    # before setup.sh ran, causing "bin directory not found" or "copy to self" errors.
+    # Recovery on failure: _restore_from_backup() uses .update-backup/ created above.
     echo "Installing ${target_tag}..."
-    local swap_failed=false
-
-    # Swap bin/
-    if [[ -d "$staging_dir/bin" ]]; then
-        if mv "$bin_dir" "${bin_dir}.old" 2>/dev/null; then
-            if ! mv "$staging_dir/bin" "$bin_dir" 2>/dev/null; then
-                # Restore bin
-                mv "${bin_dir}.old" "$bin_dir" 2>/dev/null
-                swap_failed=true
-            fi
-        else
-            swap_failed=true
-        fi
-    fi
-
-    # Swap lib/
-    if [[ "$swap_failed" != "true" && -d "$staging_dir/lib" ]]; then
-        if mv "$lib_dir" "${lib_dir}.old" 2>/dev/null; then
-            if ! mv "$staging_dir/lib/nyiakeeper" "$lib_dir" 2>/dev/null && \
-               ! mv "$staging_dir/lib" "$lib_dir" 2>/dev/null; then
-                # Restore lib and bin
-                mv "${lib_dir}.old" "$lib_dir" 2>/dev/null
-                rm -rf "$bin_dir"
-                mv "${bin_dir}.old" "$bin_dir" 2>/dev/null
-                swap_failed=true
-            fi
-        else
-            swap_failed=true
-        fi
-    fi
-
-    if [[ "$swap_failed" == "true" ]]; then
-        echo "Error: Failed to install new version. Restoring from backup..." >&2
-        _restore_from_backup "$bin_dir" "$lib_dir"
-        _update_cleanup
-        release_update_lock
-        return 1
-    fi
-
-    # Run setup.sh if present in staging (handles path patching etc.)
-    # After the swap, bin/ and lib/ live under the install root (parent of bin_dir).
-    # setup.sh expects to see bin/ and lib/ as siblings in its CWD, so cd there.
-    # NOTE: .old dirs kept until AFTER setup.sh succeeds, as additional recovery option.
     if [[ -f "$staging_dir/setup.sh" ]]; then
-        if ! (cd "$(dirname "$bin_dir")" && bash "$staging_dir/setup.sh") 2>/dev/null; then
+        if ! (cd "$staging_dir" && bash ./setup.sh) 2>/dev/null; then
             echo "Error: setup.sh failed. Restoring from backup..." >&2
             _restore_from_backup "$bin_dir" "$lib_dir"
-            rm -rf "${bin_dir}.old" "${lib_dir}.old"
             _update_cleanup
             release_update_lock
             return 1
         fi
+    else
+        echo "Error: setup.sh not found in update package." >&2
+        _update_cleanup
+        release_update_lock
+        return 1
     fi
-
-    # Clean up .old dirs only after setup.sh succeeds
-    rm -rf "${bin_dir}.old" "${lib_dir}.old"
 
     # Persist channel selection so future update checks stay on the same channel.
     if [[ -n "$channel_context" ]]; then
