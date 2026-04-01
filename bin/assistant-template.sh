@@ -146,6 +146,9 @@ main() {
     # Handle list agents mode (info-only, host-side resolution) - Plan 149, updated Plan 201
     if [[ "$LIST_AGENTS" == "true" ]]; then
         local agent_lib="$script_dir/../lib/agent-resolution.sh"
+        if [[ ! -f "$agent_lib" ]]; then
+            agent_lib="$script_dir/../lib/nyiakeeper/agent-resolution.sh"
+        fi
         if [[ -f "$agent_lib" ]]; then
             source "$agent_lib"
             local nyiakeeper_home
@@ -164,6 +167,9 @@ main() {
     # Handle list skills mode (info-only, host-side resolution) - Plan 177
     if [[ "$LIST_SKILLS" == "true" ]]; then
         local skill_lib="$script_dir/../lib/skill-resolution.sh"
+        if [[ ! -f "$skill_lib" ]]; then
+            skill_lib="$script_dir/../lib/nyiakeeper/skill-resolution.sh"
+        fi
         if [[ -f "$skill_lib" ]]; then
             source "$skill_lib"
             local nyiakeeper_home

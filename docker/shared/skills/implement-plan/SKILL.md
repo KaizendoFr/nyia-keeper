@@ -18,9 +18,9 @@ Parse the arguments and load the plan:
 /implement-plan <plan-ref>
 
 plan-ref:
-  Number (e.g., "228")     -> find .nyiakeeper/plans/228-*.md (exclude pair-review-* files)
+  Number (e.g., "228")     -> find .nyiakeeper/plans/228-*.md, then .nyiakeeper/shared/plans/228-*.md (exclude pair-review-* files). Private wins if found in both.
   File path                -> use directly
-  Omitted                  -> check todo.md for the current Doing task, use its plan
+  Omitted                  -> check todo.md for the current Doing task, use its plan (path may point to shared/plans/)
 ```
 
 1. **Resolve** plan-ref to an actual plan file. Read it completely.

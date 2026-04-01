@@ -386,9 +386,13 @@ EOF
         created=$((created + 1))
     fi
 
-    # Auto-add .nyiakeeper/private/ to .gitignore (Plan 201)
-    # Only appends, never removes; checks for duplicates before writing
-    ensure_private_in_gitignore "$project_path"
+    # Auto-add .nyiakeeper/private/ to .gitignore (Plan 201, narrowed by Plan 236)
+    # Only runs when PROJECT_PATH is inside a git work tree — .gitignore has no meaning
+    # outside git repos and auto-creating it on non-git workspace roots is a side effect.
+    # The helper ensure_private_in_gitignore() itself stays unconditional for explicit callers.
+    if git -C "$project_path" rev-parse --is-inside-work-tree &>/dev/null; then
+        ensure_private_in_gitignore "$project_path"
+    fi
 
     # In quiet mode, skip all output (used by auto-init)
     if [[ "$mode" == "quiet" ]]; then
@@ -2449,11 +2453,21 @@ run_debug_shell() {
         shm_args=(--shm-size=2g)
     fi
 
+    # Allow bubblewrap sandbox to create user namespaces inside the container.
+    # Codex uses bwrap for sandboxed command execution — it calls clone(CLONE_NEWUSER)
+    # which Docker's default seccomp profile blocks.
+    local sandbox_security_args=()
+    if [[ "$assistant_cli" == "codex" ]]; then
+        sandbox_security_args=(--security-opt seccomp=unconfined)
+        print_verbose "Relaxed seccomp for codex bubblewrap sandbox"
+    fi
+
     # Direct bash execution, no entrypoint
     docker run -it --rm \
         $(get_docker_network_args) \
         $(get_docker_user_args) \
         "${shm_args[@]}" \
+        "${sandbox_security_args[@]}" \
         --entrypoint bash \
         "${VOLUME_ARGS[@]}" \
         -v "$project_data_dir":/data:rw \
@@ -2676,10 +2690,20 @@ run_docker_container() {
         shm_args=(--shm-size=2g)
     fi
 
+    # Allow bubblewrap sandbox to create user namespaces inside the container.
+    # Codex uses bwrap for sandboxed command execution — it calls clone(CLONE_NEWUSER)
+    # which Docker's default seccomp profile blocks.
+    local sandbox_security_args=()
+    if [[ "$assistant_cli" == "codex" ]]; then
+        sandbox_security_args=(--security-opt seccomp=unconfined)
+        print_verbose "Relaxed seccomp for codex bubblewrap sandbox"
+    fi
+
     docker run -it --rm \
         $(get_docker_network_args) \
         $(get_docker_user_args) \
         "${shm_args[@]}" \
+        "${sandbox_security_args[@]}" \
         -w "$container_path" \
         "${VOLUME_ARGS[@]}" \
         -v "$project_data_dir":/data:rw \
@@ -3198,6 +3222,9 @@ list_assistant_flavors() {
     local assistant_name="$1"
     local script_dir="$(dirname "${BASH_SOURCE[0]}")"
     local flavors_file="$script_dir/../lib/flavors.list"
+    if [[ ! -f "$flavors_file" ]]; then
+        flavors_file="$script_dir/../lib/nyiakeeper/flavors.list"
+    fi
 
     echo "Nyia Keeper ${assistant_name} - Available Flavors:"
     echo ""

@@ -15,6 +15,9 @@ readonly UPDATE_CURL_TIMEOUT=5       # seconds
 readonly GITHUB_REPO="KaizendoFr/nyia-keeper"
 readonly GITHUB_API="https://api.github.com/repos/${GITHUB_REPO}"
 readonly GITHUB_RELEASES_URL="https://github.com/${GITHUB_REPO}/releases"
+# Public installer URL — this IS the scripts/public-install.sh contract, served via
+# raw GitHub content. Same URL users use for first install.
+readonly FRESH_INSTALL_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/main/install.sh"
 readonly MAX_RELEASE_NOTES_LINES=20
 readonly LOCK_STALE_TIMEOUT=300      # 5 minutes — real updates can exceed 60s on slow connections
 
@@ -610,6 +613,51 @@ _verify_checksum() {
     return 0
 }
 
+# --- Self-repair ---
+
+# Offer fresh reinstall when the local update mechanism is broken (chicken-and-egg).
+# Called AFTER backup is restored and lock is released — user is in a safe state.
+_offer_fresh_install() {
+    local channel="${1:-}"
+
+    # Fall back to installed channel if caller didn't pass one
+    if [[ -z "$channel" ]]; then
+        channel=$(get_installed_channel 2>/dev/null) || channel=""
+    fi
+
+    echo "" >&2
+    echo "The update mechanism may be outdated and unable to self-update." >&2
+    echo "A fresh reinstall can fix this." >&2
+    echo "" >&2
+
+    local answer=""
+    if read -r -p "Reinstall now? [y/N] " answer < /dev/tty 2>/dev/null; then
+        case "$answer" in
+            [yY]|[yY][eE][sS])
+                echo "" >&2
+                echo "Downloading fresh installer..." >&2
+                if curl -fsSL "$FRESH_INSTALL_URL" | NYIA_CHANNEL="$channel" bash; then
+                    echo "" >&2
+                    echo "Reinstall complete. Please restart your terminal." >&2
+                    return 0
+                else
+                    echo "Reinstall failed." >&2
+                fi
+                ;;
+        esac
+    fi
+
+    # User declined, TTY unavailable, or reinstall failed — print manual command
+    echo "" >&2
+    echo "To reinstall manually:" >&2
+    if [[ -n "$channel" && "$channel" != "latest" ]]; then
+        echo "  NYIA_CHANNEL=$channel curl -fsSL $FRESH_INSTALL_URL | bash" >&2
+    else
+        echo "  curl -fsSL $FRESH_INSTALL_URL | bash" >&2
+    fi
+    return 1
+}
+
 # --- Update ---
 
 perform_update() {
@@ -713,8 +761,12 @@ perform_update() {
         if ! (cd "$staging_dir" && bash ./setup.sh) 2>/dev/null; then
             echo "Error: setup.sh failed. Restoring from backup..." >&2
             _restore_from_backup "$bin_dir" "$lib_dir"
-            _update_cleanup
             release_update_lock
+            if _offer_fresh_install "$channel_context"; then
+                _update_cleanup
+                return 0
+            fi
+            _update_cleanup
             return 1
         fi
     else
@@ -738,8 +790,12 @@ perform_update() {
         echo "Error: Update failed — installed version is still ${new_version} (expected ${target_tag})" >&2
         echo "Restoring previous version..." >&2
         _restore_from_backup "$bin_dir" "$lib_dir"
-        _update_cleanup
         release_update_lock
+        if _offer_fresh_install "$channel_context"; then
+            _update_cleanup
+            return 0
+        fi
+        _update_cleanup
         return 1
     else
         echo "Update installed. Please restart your terminal."

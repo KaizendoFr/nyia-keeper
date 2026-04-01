@@ -55,7 +55,9 @@ Update these sections:
 
 ## D) Update Active Plan Files
 
-- Find plan referenced by current 🔥 Doing todo in `.nyiakeeper/plans/`
+- Find plan referenced by current 🔥 Doing todo — follow the path in todo.md, which
+  may point to `.nyiakeeper/plans/` or `.nyiakeeper/shared/plans/`
+- Write updates to the plan in its current directory (do NOT move shared plans back to private)
 - Check off completed `[ ]` → `[x]` implementation steps
 - Add notes for partially completed steps
 

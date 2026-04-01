@@ -10,7 +10,7 @@ When invoked with plan references, do the following:
 ## A) Parse Arguments
 
 - Accept plan numbers or file paths: `/run-plans 212 213 206`
-- Resolve each to its plan file in `.nyiakeeper/plans/`
+- Resolve each to its plan file: search `.nyiakeeper/plans/` first, then `.nyiakeeper/shared/plans/` as fallback. Private wins if found in both.
 - Read each plan completely
 
 ## B) Build Conflict Matrix

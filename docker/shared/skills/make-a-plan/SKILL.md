@@ -33,6 +33,10 @@ When invoked with a goal or context, do the following:
 
 Create a plan file in `.nyiakeeper/plans/` with name format: `{number}-{slug}.md`
 
+**Plan numbering**: To determine the next plan number, scan BOTH `.nyiakeeper/plans/`
+AND `.nyiakeeper/shared/plans/` for existing plan files. Use the highest number found
+across both locations + 1. This prevents collisions with shared plans.
+
 **Required sections (per system prompt):**
 
 ```markdown

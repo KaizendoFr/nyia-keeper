@@ -10,8 +10,12 @@ When invoked, follow the Context Management Protocol:
 ## A) Read Project State (MANDATORY - do not assume)
 
 1. Read `.nyiakeeper/todo.md` FIRST - check current task status (🔥 Doing section)
+   - If `todo.md` doesn't exist but `.nyiakeeper/shared/todo.md` does, use shared as starting point
+   - If both exist, use private (working copy) but note shared exists
 2. Read `.nyiakeeper/{assistant}/context.md` - understand where previous session left off
-3. Find and read active plans referenced by in-progress todos in `.nyiakeeper/plans/`
+3. Find and read active plans referenced by in-progress todos — plan paths may point to
+   either `.nyiakeeper/plans/` or `.nyiakeeper/shared/plans/` (follow the path in todo.md).
+   Also scan `.nyiakeeper/shared/plans/` for active plans not referenced in todo.md.
 4. Inspect git state: `git status`, `git branch --show-current`, `git log -n 5 --oneline`
 
 ## B) Output "State Snapshot"

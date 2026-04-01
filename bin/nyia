@@ -362,7 +362,12 @@ case "${1:-help}" in
     completions)
         # Output shell completion script to stdout
         shift
-        completions_dir="$(dirname "$(realpath "$0")")/../lib/completions"
+        _script_base="$(dirname "$(realpath "$0")")"
+        if [[ -d "$_script_base/../lib/completions" ]]; then
+            completions_dir="$_script_base/../lib/completions"
+        else
+            completions_dir="$_script_base/../lib/nyiakeeper/completions"
+        fi
         shell_arg="${1:-}"
         case "$shell_arg" in
             bash)

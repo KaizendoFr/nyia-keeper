@@ -13,9 +13,9 @@ Review code that was written to implement a plan. Focus on what matters: does it
 /code-review [plan-ref] [--files file1 file2 ...]
 
 plan-ref:
-  Number (e.g., "197")     -> find .nyiakeeper/plans/197-*.md (exclude pair-review-* files)
+  Number (e.g., "197")     -> find .nyiakeeper/plans/197-*.md, then .nyiakeeper/shared/plans/197-*.md (exclude pair-review-* files). Private wins if found in both.
   File path                -> use directly
-  Omitted                  -> check todo.md for in-progress task, use its plan
+  Omitted                  -> check todo.md for in-progress task, use its plan (path may point to shared/plans/)
 
 --files (optional):
   Specific files to review. If omitted, discover from plan + git diff.
@@ -23,7 +23,7 @@ plan-ref:
 
 ## B) Load Context
 
-1. **Find the plan**: Resolve plan-ref to plan file. Read it completely.
+1. **Find the plan**: Resolve plan-ref to plan file. Search `.nyiakeeper/plans/` first, then `.nyiakeeper/shared/plans/` as fallback. Read it completely. Write code review file next to the plan (same directory).
 2. **Identify changed files**: Use the plan's "Implementation Steps" to find which files were touched. Cross-reference with `git diff --name-only` if available.
 3. **Read the code**: Read each changed file (or the specific sections mentioned in the plan).
 4. **Read existing tests**: Find test files related to the changed code.

@@ -19,7 +19,7 @@ subcommand:
   "respond"          → RESPOND MODE (plan author reads review, discusses, updates plan)
 
 plan-ref:
-  Number (e.g., "121")     → find .nyiakeeper/plans/121-*.md (exclude plan-review-* and pair-review-* files)
+  Number (e.g., "121")     → find .nyiakeeper/plans/121-*.md, then .nyiakeeper/shared/plans/121-*.md (exclude plan-review-* and pair-review-* files). Private wins if found in both.
   File path                → use directly
 
 lens (optional — plan mode only, shapes review perspective):
@@ -32,8 +32,8 @@ lens (optional — plan mode only, shapes review perspective):
 
 ## B) Load Context (both modes)
 
-1. Resolve plan-ref to an actual plan file. Read it completely.
-2. Find review files matching: `plan-review-*-plan-{N}-*.md` OR `pair-review-*-plan-{N}-*.md` in `.nyiakeeper/plans/` (search both prefixes for backward compatibility with existing review files)
+1. Resolve plan-ref to an actual plan file. Search `.nyiakeeper/plans/` first, then `.nyiakeeper/shared/plans/` as fallback. Read it completely.
+2. Find review files matching: `plan-review-*-plan-{N}-*.md` OR `pair-review-*-plan-{N}-*.md` in the same directory as the plan file (review files live next to their plan)
 3. Determine round number: count `## Round` headers in existing review file. Next = count + 1. No file = Round 1.
 4. Identify yourself (your assistant name) from context or environment.
 
@@ -144,7 +144,7 @@ You are the **plan author**. Someone else reviewed your plan.
 
 ### Steps
 
-1. **Find the review**: Look for `plan-review-*-for-{me}-plan-{N}-*.md` or `pair-review-*-for-{me}-plan-{N}-*.md` (search both prefixes for backward compatibility with existing review files)
+1. **Find the review**: Look for `plan-review-*-for-{me}-plan-{N}-*.md` or `pair-review-*-for-{me}-plan-{N}-*.md` in both `.nyiakeeper/plans/` and `.nyiakeeper/shared/plans/` (search both prefixes for backward compatibility with existing review files)
    - If multiple files match, use most recently modified. If ambiguous, ask the human.
    - If no review found, inform the human and stop.
 
