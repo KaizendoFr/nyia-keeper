@@ -1,3 +1,8 @@
+---
+name: share
+description: "Promote/Demote Plans Between Private and Shared"
+---
+
 # Share - Promote/Demote Plans Between Private and Shared
 
 Move plans (and their review files) between `.nyiakeeper/plans/` (private, gitignored)

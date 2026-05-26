@@ -15,7 +15,8 @@
 # === COMMAND APPROVAL MODE ===
 # Controls approval behavior when assistants execute commands.
 #   safe  - require approvals / restrictive behavior (default, recommended)
-#   full  - suppress approval prompts via assistant-native flags
+#   full  - best-effort: suppress most approval prompts via assistant-native flags.
+#            Some CLIs may still prompt for certain operations (upstream limitation).
 #            Only use in trusted/isolated environments (e.g., containers).
 NYIA_COMMAND_MODE="safe"
 

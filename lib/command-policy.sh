@@ -439,7 +439,7 @@ build_assistant_mode_args() {
             echo "--yolo"
             ;;
         gemini)
-            echo "--yolo"
+            echo "--approval-mode=yolo"
             ;;
         opencode)
             echo "Info: full mode requested but OpenCode has no permissive override flag; using assistant defaults" >&2
