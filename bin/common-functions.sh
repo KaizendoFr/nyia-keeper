@@ -323,31 +323,62 @@ ensure_project_prompts_directory() {
     init_shared_structure "$project_path" "quiet"
 }
 
-# Ensure .nyiakeeper/private/ is listed in the project's .gitignore (Plan 201)
-# Only appends, never removes lines. Safe to call multiple times (dedup check).
+# Ensure Nyia private/session/runtime entries are in the project's .gitignore (Plan 248)
+# Replaces the old single-entry ensure_private_in_gitignore (Plan 201).
+#
+# Contract: auto-ignore private, session, and runtime dirs.
+# Explicitly NOT ignored (trackable): .nyiakeeper/shared/**, exclusions.conf,
+# nyia.conf, {assistant}.conf, {assistant}/overlay/**.
+#
+# Only appends, never removes lines. Safe to call multiple times (dedup per entry).
 # Creates .gitignore if it does not exist.
-ensure_private_in_gitignore() {
+ensure_nyia_gitignore() {
     local project_path="$1"
     local gitignore="$project_path/.gitignore"
-    local entry=".nyiakeeper/private/"
 
-    # Check if entry already present (exact line match)
-    if [[ -f "$gitignore" ]]; then
-        if grep -qFx "$entry" "$gitignore" 2>/dev/null; then
-            return 0
+    # Selective ignore contract: private/session/runtime only.
+    # Intentionally ignores top-level assistant runtime dirs (.claude/ etc.) because
+    # these contain credentials, session state, and ephemeral config that should never
+    # be committed. This is a conscious trade-off — if a user has an unrelated .claude/
+    # directory, it will be ignored. Assistant runtime dirs are not project artifacts.
+    local entries=(
+        # Nyia private/session files
+        ".nyiakeeper/private/"
+        ".nyiakeeper/plans/"
+        ".nyiakeeper/todo.md"
+        ".nyiakeeper/*/context.md"
+        ".nyiakeeper/workspace.conf"
+        ".nyiakeeper/.excluded-files.cache"
+        ".nyiakeeper/dev-tools/"
+        ".nyiakeeper/creds/"
+        # Assistant runtime dirs (credentials, session state, ephemeral config)
+        ".claude/"
+        ".codex/"
+        ".gemini/"
+        ".opencode/"
+        ".vibe/"
+    )
+
+    for entry in "${entries[@]}"; do
+        # Skip if already present (exact line match, dedup)
+        if [[ -f "$gitignore" ]] && grep -qFx "$entry" "$gitignore" 2>/dev/null; then
+            continue
         fi
-    fi
 
-    # Append with a trailing newline to avoid joining with last line
-    # If file exists but doesn't end with newline, add one first
-    if [[ -f "$gitignore" ]] && [[ -s "$gitignore" ]]; then
         # Ensure file ends with newline before appending
-        if [[ "$(tail -c 1 "$gitignore" 2>/dev/null | wc -l)" -eq 0 ]]; then
-            printf '\n' >> "$gitignore"
+        if [[ -f "$gitignore" ]] && [[ -s "$gitignore" ]]; then
+            if [[ "$(tail -c 1 "$gitignore" 2>/dev/null | wc -l)" -eq 0 ]]; then
+                printf '\n' >> "$gitignore"
+            fi
         fi
-    fi
 
-    printf '%s\n' "$entry" >> "$gitignore"
+        printf '%s\n' "$entry" >> "$gitignore"
+    done
+}
+
+# Backward compat alias — old callers still work
+ensure_private_in_gitignore() {
+    ensure_nyia_gitignore "$@"
 }
 
 # Initialize .nyiakeeper/shared/ and .nyiakeeper/private/ project structure
@@ -386,12 +417,11 @@ EOF
         created=$((created + 1))
     fi
 
-    # Auto-add .nyiakeeper/private/ to .gitignore (Plan 201, narrowed by Plan 236)
+    # Auto-add Nyia private/session/runtime entries to .gitignore (Plan 248)
     # Only runs when PROJECT_PATH is inside a git work tree — .gitignore has no meaning
-    # outside git repos and auto-creating it on non-git workspace roots is a side effect.
-    # The helper ensure_private_in_gitignore() itself stays unconditional for explicit callers.
+    # outside git repos (Plan 236 invariant).
     if git -C "$project_path" rev-parse --is-inside-work-tree &>/dev/null; then
-        ensure_private_in_gitignore "$project_path"
+        ensure_nyia_gitignore "$project_path"
     fi
 
     # In quiet mode, skip all output (used by auto-init)

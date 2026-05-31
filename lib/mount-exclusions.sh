@@ -330,6 +330,8 @@ get_exclusion_patterns() {
     echo ".env.* env.local .env.production .env.staging .env.development .env.test .env.backup"
     # Generic credentials (but not .nyiakeeper/creds/ directory)
     echo "credentials.json credentials.yaml credentials.xml credentials.txt auth.json"
+    # OpenRC-style files (OpenStack, cloud providers) and broader credentials catch-all
+    echo "openrc openrc.sh openrc-* *-openrc *-openrc.sh *credentials* *credential*"
     
     # === INFRASTRUCTURE AS CODE ===
     # Terraform

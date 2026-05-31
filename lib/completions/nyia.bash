@@ -17,7 +17,7 @@ _nyia() {
     _init_completion || return
 
     # Top-level subcommands
-    local commands="config exclusions update list status clean completions rollback help"
+    local commands="config exclusions update list status clean completions rollback logo help"
 
     # Global flags
     local global_flags="--help --verbose --version --path"

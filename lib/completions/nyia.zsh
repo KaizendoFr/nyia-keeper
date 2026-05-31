@@ -24,6 +24,7 @@ _nyia() {
         'clean:Clean up old development images'
         'completions:Generate shell auto-completion scripts (bash, zsh)'
         'rollback:Rollback to previous version'
+        'logo:Display Nyia Keeper ASCII art'
         'help:Show help information'
     )
     global_flags=(

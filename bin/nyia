@@ -373,7 +373,7 @@ case "${1:-help}" in
             bash)
                 if [[ -f "$completions_dir/nyia.bash" ]]; then
                     cat "$completions_dir/nyia.bash"
-                    if [ -t 2 ]; then
+                    if [ -t 1 ]; then
                         echo "" >&2
                         echo "# To enable permanently, add to your ~/.bashrc:" >&2
                         echo "#   eval \"\$(nyia completions bash)\"" >&2
@@ -386,7 +386,7 @@ case "${1:-help}" in
             zsh)
                 if [[ -f "$completions_dir/nyia.zsh" ]]; then
                     cat "$completions_dir/nyia.zsh"
-                    if [ -t 2 ]; then
+                    if [ -t 1 ]; then
                         echo "" >&2
                         echo "# To enable permanently, add to your ~/.zshrc:" >&2
                         echo "#   eval \"\$(nyia completions zsh)\"" >&2

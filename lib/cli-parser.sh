@@ -190,13 +190,14 @@ get_dispatcher_arg_desc() {
         "update") echo "Update management (status, list, check, install)" ;;
         "rollback") echo "Rollback to previous version" ;;
         "completions") echo "Generate shell auto-completion scripts (bash, zsh)" ;;
+        "logo") echo "Display Nyia Keeper ASCII art" ;;
         *) echo "" ;;
     esac
 }
 
 # Get all dispatcher arguments (for iteration)
 get_dispatcher_args() {
-    echo "config list status exclusions update rollback completions"
+    echo "config list status exclusions update rollback completions logo"
 }
 
 # === HELP SYSTEM ===
@@ -204,7 +205,7 @@ show_dispatcher_help() {
     local script_name="$1"
     
     cat << EOF
-Nyia Keeper Multi-Assistant Infrastructure - "I whisper in code. You commit in fear."
+Nyia Keeper Multi-Assistant Infrastructure =^•ᆺ•^= ~nya!
 
 Usage:
   $script_name <command>                    # System management commands
@@ -465,7 +466,7 @@ parse_dispatcher_args() {
                     exit 1
                 fi
                 ;;
-            config|list|status|clean|exclusions|update|rollback|completions|help)
+            config|list|status|clean|exclusions|update|rollback|completions|logo|help)
                 COMMAND="$1"
                 shift
                 REMAINING_ARGS=("$@")
