@@ -369,6 +369,20 @@ resolve_and_export_command_mode() {
     export NYIA_COMMAND_MODE_SOURCE="${result#*	}"
 }
 
+# Convenience: resolve and export NYIA_RAG_MODEL from config precedence.
+# Must be called directly (not in a subshell) for the exports to persist.
+resolve_and_export_rag_model() {
+    local assistant_name="${1:-}"
+    local project_path="${2:-}"
+    local result
+    result=$(_resolve_rag_model "$assistant_name" "$project_path")
+    local model="${result%%	*}"
+    if [[ -n "$model" ]]; then
+        export NYIA_RAG_MODEL="$model"
+        export NYIA_RAG_MODEL_SOURCE="${result#*	}"
+    fi
+}
+
 # Get just the effective mode (for use in subshells / $())
 get_effective_command_mode() {
     local result

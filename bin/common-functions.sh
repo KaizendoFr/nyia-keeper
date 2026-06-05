@@ -347,7 +347,7 @@ ensure_nyia_gitignore() {
         ".nyiakeeper/plans/"
         ".nyiakeeper/todo.md"
         ".nyiakeeper/*/context.md"
-        ".nyiakeeper/workspace.conf"
+        # NOTE: workspace.conf intentionally NOT gitignored — it's shareable team config
         ".nyiakeeper/.excluded-files.cache"
         ".nyiakeeper/dev-tools/"
         ".nyiakeeper/creds/"
@@ -2604,15 +2604,27 @@ run_docker_container() {
     fi
 
     # Resolve and pass command approval mode to container (Plan 145)
-    # Source command-policy on demand
+    # Source command-policy on demand — candidate probing (dev source → installed layout)
     local _policy_lib=""
-    _policy_lib="$HOME/.local/lib/nyiakeeper/command-policy.sh"
+    local _candidate_dev="$script_dir/../lib/command-policy.sh"
+    local _candidate_installed="$HOME/.local/lib/nyiakeeper/command-policy.sh"
+    if [[ -f "$_candidate_dev" ]]; then
+        _policy_lib="$_candidate_dev"
+    elif [[ -f "$_candidate_installed" ]]; then
+        _policy_lib="$_candidate_installed"
+    fi
     if [[ -f "$_policy_lib" ]]; then
         source "$_policy_lib"
         resolve_and_export_command_mode "$assistant_cli" "$project_path"
         docker_env_args+=(-e NYIA_COMMAND_MODE="${NYIA_COMMAND_MODE}")
         docker_env_args+=(-e NYIA_COMMAND_MODE_SOURCE="${NYIA_COMMAND_MODE_SOURCE}")
         print_verbose "Command mode: ${NYIA_COMMAND_MODE} (source: ${NYIA_COMMAND_MODE_SOURCE})"
+
+        # Resolve RAG model from config precedence (Plan 252)
+        resolve_and_export_rag_model "$assistant_cli" "$project_path"
+        if [[ -n "${NYIA_RAG_MODEL:-}" ]]; then
+            print_verbose "RAG model: ${NYIA_RAG_MODEL} (source: ${NYIA_RAG_MODEL_SOURCE:-config})"
+        fi
     fi
 
     # Pass work branch to container if set (for --work-branch support)
