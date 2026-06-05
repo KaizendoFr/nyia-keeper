@@ -519,21 +519,22 @@ show_update_prompt() {
     local current_version="$1"
     local new_version="$2"
 
-    echo ""
-    echo "================================================================"
-    echo "  New version available: ${current_version} -> ${new_version}"
-    echo "================================================================"
-    echo ""
+    # All output to stderr — stdout may be captured by eval "$(nyia completions bash)"
+    echo "" >&2
+    echo "================================================================" >&2
+    echo "  New version available: ${current_version} -> ${new_version}" >&2
+    echo "================================================================" >&2
+    echo "" >&2
 
-    echo "Release notes:"
-    echo "---"
-    fetch_release_notes "$new_version"
-    echo "---"
-    echo ""
-    echo "Full release: ${GITHUB_RELEASES_URL}/tag/${new_version}"
-    echo ""
-    echo "----------------------------------------------------------------"
-    echo ""
+    echo "Release notes:" >&2
+    echo "---" >&2
+    fetch_release_notes "$new_version" >&2
+    echo "---" >&2
+    echo "" >&2
+    echo "Full release: ${GITHUB_RELEASES_URL}/tag/${new_version}" >&2
+    echo "" >&2
+    echo "----------------------------------------------------------------" >&2
+    echo "" >&2
 
     # Read from /dev/tty for pipe safety
     local answer=""
@@ -927,8 +928,9 @@ check_for_updates_if_due() {
         NYIAKEEPER_HOME="$_config_root"
     fi
 
-    # Guard: must be a TTY
-    if [[ ! -t 0 ]] && [[ ! -t 1 ]]; then
+    # Guard: must be a fully interactive TTY (both stdin AND stdout)
+    # Inside eval "$(nyia completions bash)", stdout is a pipe — skip update check
+    if [[ ! -t 0 ]] || [[ ! -t 1 ]]; then
         return 0
     fi
 
