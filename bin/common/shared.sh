@@ -676,6 +676,57 @@ get_docker_registry() {
     echo "${NYIA_REGISTRY:-ghcr.io/kaizendofr}"
 }
 
+# Resolve the installed host VERSION (Plan 270).
+# Single source of truth for the host's nyia version, reused by the compat-guard
+# env-pass. Precedence: NYIA_VERSION env override -> installed VERSION state file.
+# Echoes the raw version string, or empty when none is known (dev/source checkouts).
+_resolve_host_version() {
+    if [[ -n "${NYIA_VERSION:-}" ]]; then
+        printf '%s' "$NYIA_VERSION"
+        return
+    fi
+
+    local _config_root="${XDG_CONFIG_HOME:-$HOME/.config}/nyiakeeper"
+    local _version_file="$_config_root/VERSION"
+    if [[ -f "$_version_file" ]]; then
+        tr -d '[:space:]' < "$_version_file" | head -1
+        return
+    fi
+
+    printf '%s'
+}
+
+# Resolve the host channel (Plan 270 — single shared resolver, R4/H1).
+# Precedence: NYIA_CHANNEL env -> CHANNEL state file -> infer from installed
+# VERSION (matches CI tagging: *-alpha.* -> alpha). Echoes the channel, or empty
+# when it cannot be determined. Reused by _get_runtime_image_tag() and the
+# compat-guard env-pass so channel logic is defined in exactly one place.
+_resolve_host_channel() {
+    local channel="${NYIA_CHANNEL:-}"
+
+    local _config_root="${XDG_CONFIG_HOME:-$HOME/.config}/nyiakeeper"
+
+    # If no channel env var, read from state file.
+    if [[ -z "$channel" ]]; then
+        local _channel_file="$_config_root/CHANNEL"
+        if [[ -f "$_channel_file" ]]; then
+            channel=$(tr -d '[:space:]' < "$_channel_file" | head -1)
+        fi
+    fi
+
+    # VERSION-based fallback (Plan 227): when no CHANNEL file exists, infer
+    # channel from installed version. Matches CI tagging: *-alpha.* -> alpha.
+    if [[ -z "$channel" ]]; then
+        local _installed_ver
+        _installed_ver=$(_resolve_host_version)
+        if [[ "$_installed_ver" == *-alpha.* ]]; then
+            channel="alpha"
+        fi
+    fi
+
+    printf '%s' "$channel"
+}
+
 # Resolve the Docker image tag to use for runtime images.
 # Channel model (Plan 192):
 #   - NYIA_IMAGE_TAG env var: explicit override (highest priority)
@@ -690,29 +741,9 @@ _get_runtime_image_tag() {
         return
     fi
 
-    local channel="${NYIA_CHANNEL:-}"
-
-    # If no channel env var, read from state file
-    if [[ -z "$channel" ]]; then
-        local _config_root="${XDG_CONFIG_HOME:-$HOME/.config}/nyiakeeper"
-        local _channel_file="$_config_root/CHANNEL"
-        if [[ -f "$_channel_file" ]]; then
-            channel=$(tr -d '[:space:]' < "$_channel_file" | head -1)
-        fi
-    fi
-
-    # VERSION-based fallback (Plan 227): when no CHANNEL file exists, infer
-    # channel from installed version. Matches CI tagging: *-alpha.* → alpha.
-    if [[ -z "$channel" ]]; then
-        local _version_file="${_config_root:-${XDG_CONFIG_HOME:-$HOME/.config}/nyiakeeper}/VERSION"
-        if [[ -f "$_version_file" ]]; then
-            local _installed_ver
-            _installed_ver=$(tr -d '[:space:]' < "$_version_file" | head -1)
-            if [[ "$_installed_ver" == *-alpha.* ]]; then
-                channel="alpha"
-            fi
-        fi
-    fi
+    # Shared resolver (Plan 270): channel logic lives in _resolve_host_channel().
+    local channel
+    channel=$(_resolve_host_channel)
 
     case "${channel:-latest}" in
         alpha)   echo "alpha" ;;

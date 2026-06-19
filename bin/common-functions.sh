@@ -2633,6 +2633,18 @@ run_docker_container() {
     docker_env_args+=(-e NYIA_PROJECT_PATH="$container_path")
     docker_env_args+=(-e NYIA_BUILD_TIMESTAMP="$(date -Iseconds)")
 
+    # Host<->container version/channel compatibility guard (Plan 270).
+    # Pass the installed host version/channel so the entrypoint can compare them
+    # against the image-baked /etc/nyia-version. Derived from the SINGLE shared
+    # resolver in bin/common/shared.sh (no ad-hoc channel parsing here). Empty
+    # values are fine — the in-container policy treats them as unknown (fail-open).
+    if declare -f _resolve_host_version >/dev/null 2>&1; then
+        docker_env_args+=(-e NYIA_HOST_VERSION="$(_resolve_host_version)")
+    fi
+    if declare -f _resolve_host_channel >/dev/null 2>&1; then
+        docker_env_args+=(-e NYIA_HOST_CHANNEL="$(_resolve_host_channel)")
+    fi
+
     # Terminal color support — pass host values with safe defaults
     docker_env_args+=(-e TERM="${TERM:-xterm-256color}")
     docker_env_args+=(-e COLORTERM="${COLORTERM:-truecolor}")
