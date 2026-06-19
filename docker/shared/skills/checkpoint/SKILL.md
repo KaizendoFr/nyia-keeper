@@ -82,7 +82,27 @@ Output to user:
 **Resume command**: `/kickoff` or continue with [specific task]
 ```
 
-## F) Final Checks
+## F) Publish Team News (whatsup integration — Nyia mode only, opt-in)
+
+Before final checks, detect whether this session changed meta-files and, if so,
+offer to publish a `/whatsup` news entry so the team learns about it:
+
+- Only when `NYIA_WHATSUP_ENABLED=true`. Resolve with `nyia config view
+  whatsup_enabled` if the CLI is available, otherwise read `.nyiakeeper/nyia.conf`
+  then `~/.config/nyiakeeper/config/nyia.conf`. Default is `false` — if so, skip
+  this section. If `.nyiakeeper/` is absent (standalone mode), skip.
+- Meta-file detection (generic, cross-assistant — no Claude-specific paths):
+  anything under `~/.config/nyiakeeper/`, `.nyiakeeper/shared/`,
+  `.nyiakeeper/*/SKILL.md`, or any `*.conf` under `.nyiakeeper/`. Pure code
+  changes do NOT trigger this.
+- If meta-files changed, ask: "This session changed [list paths]. Publish a
+  /whatsup entry so the team sees it?" If yes, hand off to `/whatsup add`
+  (draft → confirm → commit).
+- NO-SECRETS RULE: summarize changes by path and the user's own words only.
+  Never copy config/prompt/credential contents into a news entry — entries are
+  committed and shared.
+
+## G) Final Checks
 
 - Verify all .nyiakeeper files are saved
 - Warn if uncommitted code changes exist: "WARNING: Uncommitted changes in [files]"

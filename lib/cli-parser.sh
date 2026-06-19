@@ -90,6 +90,27 @@ validate_flavor() {
         return 0
     fi
 
+    # Accept custom pseudo-flavors (Plan 266): custom / <base>-custom.
+    # Uses the SHARED helper from shared.sh so parser and resolver agree.
+    # custom is NOT in flavors.list (dynamic local selector), so it is checked here.
+    if declare -f validate_custom_pseudo_flavor >/dev/null \
+        && declare -f is_custom_pseudo_flavor >/dev/null; then
+        if is_custom_pseudo_flavor "$flavor" >/dev/null 2>&1; then
+            if validate_custom_pseudo_flavor "$flavor"; then
+                return 0
+            fi
+            echo "Error: Unknown custom flavor base in '$flavor'" >&2
+            echo "" >&2
+            echo "Custom flavors select a locally built overlay image:" >&2
+            echo "  custom          # default-base custom image" >&2
+            echo "  <base>-custom   # e.g. php-custom, php-react-custom" >&2
+            echo "" >&2
+            echo "The <base> must be a real flavor. Build one first with:" >&2
+            echo "  --build-custom-image --flavor ${flavor%-custom}" >&2
+            return 1
+        fi
+    fi
+
     # Flavor not found - show helpful error
     echo "Error: Unknown flavor '$flavor'" >&2
     echo "" >&2
@@ -380,6 +401,8 @@ Workspace Mode (Multi-Repository):
 
 Flavors:
   --flavor <name>          # Select language flavor (e.g., python, node, rust-tauri)
+  --flavor custom          # Select your locally built default-base custom image
+  --flavor <base>-custom   # Select a local custom image (e.g. php-custom, php-react-custom)
   --list-flavors           # List available flavors for this assistant
 
 Power User:
@@ -914,6 +937,20 @@ validate_args() {
         echo "Choose one approach:" >&2
         echo "  --flavor node           # Use flavor system" >&2
         echo "  --image custom:tag      # Use specific image" >&2
+        exit 1
+    fi
+
+    # Reject building a custom image whose base is itself a custom pseudo-flavor (Plan 266).
+    # Build-time --flavor must name a REAL base flavor (e.g. php), not custom/<base>-custom.
+    if [[ "$BUILD_CUSTOM_IMAGE" == "true" && -n "$FLAVOR" ]] \
+        && declare -f is_custom_pseudo_flavor >/dev/null \
+        && is_custom_pseudo_flavor "$FLAVOR" >/dev/null 2>&1; then
+        echo "Error: --build-custom-image --flavor '$FLAVOR' is not allowed" >&2
+        echo "" >&2
+        echo "Custom pseudo-flavors (custom, <base>-custom) are run-time selectors, not build bases." >&2
+        echo "Use a real base flavor to build, then select the result:" >&2
+        echo "  nyia --build-custom-image --flavor ${FLAVOR%-custom}   # build" >&2
+        echo "  nyia --flavor $FLAVOR   # run the built custom image" >&2
         exit 1
     fi
 

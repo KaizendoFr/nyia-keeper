@@ -11,7 +11,13 @@ _AUTO_UPDATE_LOADED=1
 # --- Constants ---
 
 readonly UPDATE_CHECK_INTERVAL=3600  # 1 hour in seconds
-readonly UPDATE_CURL_TIMEOUT=5       # seconds
+readonly UPDATE_CURL_TIMEOUT=5       # seconds — fast metadata calls (API/manifest)
+# Release-asset downloads need a larger bound than metadata calls:
+# UPDATE_CURL_TIMEOUT (5s) targets small JSON responses, whereas the runtime
+# tarball is a multi-MB asset served via a signed redirect and can take longer
+# on slow connections. The checksum file is tiny, so it keeps a tighter bound.
+readonly UPDATE_TARBALL_TIMEOUT=60   # seconds — multi-MB runtime tarball
+readonly UPDATE_CHECKSUM_TIMEOUT=10  # seconds — tiny .sha256 file
 readonly GITHUB_REPO="KaizendoFr/nyia-keeper"
 readonly GITHUB_API="https://api.github.com/repos/${GITHUB_REPO}"
 readonly GITHUB_RELEASES_URL="https://github.com/${GITHUB_REPO}/releases"
@@ -536,9 +542,12 @@ show_update_prompt() {
     echo "----------------------------------------------------------------" >&2
     echo "" >&2
 
-    # Read from /dev/tty for pipe safety
+    # Read from /dev/tty for pipe safety.
+    # Print the prompt explicitly on stderr: `read -p` writes its prompt to
+    # stderr, so the `2>/dev/null` below would otherwise hide it (Plan 260).
     local answer=""
-    if ! read -r -p "Update now? [y/N] " answer < /dev/tty 2>/dev/null; then
+    printf "Update now? [y/N] " >&2
+    if ! read -r answer < /dev/tty 2>/dev/null; then
         echo "" >&2
         echo "Update prompt unavailable (no TTY), skipping." >&2
         return 1
@@ -632,7 +641,9 @@ _offer_fresh_install() {
     echo "" >&2
 
     local answer=""
-    if read -r -p "Reinstall now? [y/N] " answer < /dev/tty 2>/dev/null; then
+    # Prompt on stderr so it stays visible despite the read-error suppression (Plan 260)
+    printf "Reinstall now? [y/N] " >&2
+    if read -r answer < /dev/tty 2>/dev/null; then
         case "$answer" in
             [yY]|[yY][eE][sS])
                 echo "" >&2
@@ -657,6 +668,76 @@ _offer_fresh_install() {
         echo "  curl -fsSL $FRESH_INSTALL_URL | bash" >&2
     fi
     return 1
+}
+
+# --- Release-Asset Download ---
+
+# Maps a curl exit code to a concise, human-readable cause.
+# SECURITY: This is the ONLY source of user-facing download diagnostics. We never
+# pass curl's own stderr through, because with -L curl follows GitHub's redirect to
+# a signed release-asset URL (containing token=/X-Amz-* params) and may echo it in
+# error messages. Suppressing curl stderr and mapping the exit code here guarantees
+# no signed redirect URL or secret can leak.
+#
+# Pinned exit-code -> cause table (see Plan 261):
+#   6  -> DNS resolution failed
+#   7  -> connection or proxy connection failed
+#   22 -> HTTP error response (from -f; e.g. 403/404/5xx)
+#   23 -> local write failed
+#   28 -> download timed out
+#   35 -> TLS handshake failed
+#   60 -> TLS certificate validation failed
+#   *  -> download failed (curl code shown for reference)
+_curl_exit_cause() {
+    local code="$1"
+    case "$code" in
+        6)  echo "DNS resolution failed" ;;
+        7)  echo "connection or proxy connection failed" ;;
+        22) echo "HTTP error response from GitHub or the release asset host" ;;
+        23) echo "local write failed" ;;
+        28) echo "download timed out" ;;
+        35) echo "TLS handshake failed" ;;
+        60) echo "TLS certificate validation failed" ;;
+        *)  echo "download failed" ;;
+    esac
+}
+
+# Downloads a release asset with fail-fast HTTP handling and mapped diagnostics.
+#   $1 = destination file
+#   $2 = public GitHub release URL (only this URL is ever printed)
+#   $3 = max-time seconds
+#   $4 = mode: "mandatory" (default) prints "Error:" diagnostics on failure;
+#        "warn" prints a single "Warning:" line and the caller decides whether to continue.
+# Returns curl's exit code (0 on success).
+#
+# Flags: -f (fail fast on HTTP >=400 so error pages are not saved as a tarball),
+#        -s (silent — no progress meter / no stderr leakage),
+#        -L (follow redirects to the signed asset host),
+#        --retry/--retry-delay for transient release-asset failures.
+# curl stderr is suppressed (2>/dev/null) so signed redirect URLs cannot leak;
+# all diagnostics come from _curl_exit_cause() against the captured exit code.
+_download_release_asset() {
+    local dest="$1"
+    local public_url="$2"
+    local max_time="$3"
+    local mode="${4:-mandatory}"
+
+    curl -fsL --max-time "$max_time" --retry 2 --retry-delay 1 \
+        -o "$dest" "$public_url" 2>/dev/null
+    local code=$?
+
+    if [[ "$code" -ne 0 ]]; then
+        local cause
+        cause=$(_curl_exit_cause "$code")
+        if [[ "$mode" == "warn" ]]; then
+            echo "Warning: Download failed (curl exit $code: $cause) from $public_url" >&2
+        else
+            echo "Error: Failed to download from $public_url" >&2
+            echo "  curl exit $code: $cause" >&2
+        fi
+    fi
+
+    return "$code"
 }
 
 # --- Update ---
@@ -716,16 +797,17 @@ perform_update() {
 
     echo "Downloading ${target_tag}..."
 
-    # Download tarball
-    if ! curl -sL --max-time 60 -o "$tmp_dir/nyiakeeper-runtime.tar.gz" "$tarball_url"; then
-        echo "Error: Failed to download tarball from $tarball_url" >&2
+    # Download tarball (mandatory — abort before extraction on any failure)
+    if ! _download_release_asset "$tmp_dir/nyiakeeper-runtime.tar.gz" \
+        "$tarball_url" "$UPDATE_TARBALL_TIMEOUT" "mandatory"; then
         _update_cleanup
         release_update_lock
         return 1
     fi
 
-    # Download checksum (best-effort — warn if unavailable)
-    if ! curl -sL --max-time 10 -o "$tmp_dir/nyiakeeper-runtime.tar.gz.sha256" "$checksum_url" 2>/dev/null; then
+    # Download checksum (best-effort — warn if unavailable, then continue)
+    if ! _download_release_asset "$tmp_dir/nyiakeeper-runtime.tar.gz.sha256" \
+        "$checksum_url" "$UPDATE_CHECKSUM_TIMEOUT" "warn"; then
         echo "Warning: Could not download checksum file. Skipping integrity verification." >&2
     fi
 
@@ -880,7 +962,9 @@ perform_rollback() {
     echo ""
 
     local answer=""
-    read -r -p "Rollback to ${backup_version}? [y/N] " answer < /dev/tty 2>/dev/null || answer="n"
+    # Prompt on stderr so it stays visible despite the read-error suppression (Plan 260)
+    printf "Rollback to %s? [y/N] " "${backup_version}" >&2
+    read -r answer < /dev/tty 2>/dev/null || answer="n"
 
     case "$answer" in
         [yY]|[yY][eE][sS]) ;;

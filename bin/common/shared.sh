@@ -844,6 +844,128 @@ validate_flavor_name() {
     fi
 }
 
+# === CUSTOM PSEUDO-FLAVORS (Plan 266) ===
+# Custom pseudo-flavors let users select a locally built custom overlay image
+# through the familiar --flavor vocabulary instead of a long --image tag:
+#   custom         -> default-base custom image
+#   <base>-custom  -> custom image built from base flavor <base>
+# They are LOCAL-only selectors and must never be rewritten to registry tags.
+
+# Locate the flavors.list file shared across validators.
+# Honors SCRIPT_DIR (used by lib/cli-parser.sh tests) first, then falls back to
+# the project layout (lib/flavors.list, lib/nyiakeeper/flavors.list).
+_locate_flavors_file() {
+    local candidate
+    local -a candidates=()
+
+    [[ -n "${SCRIPT_DIR:-}" ]] && candidates+=("${SCRIPT_DIR}/flavors.list")
+
+    local project_home
+    project_home="$(get_project_home 2>/dev/null)" || project_home=""
+    if [[ -n "$project_home" ]]; then
+        candidates+=("${project_home}/lib/flavors.list")
+        candidates+=("${project_home}/lib/nyiakeeper/flavors.list")
+    fi
+
+    for candidate in "${candidates[@]}"; do
+        if [[ -f "$candidate" ]]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+# Detect a custom pseudo-flavor and echo its base flavor.
+#   custom         -> echoes ""   (returns 0)
+#   <base>-custom  -> echoes "<base>" by stripping ONLY the trailing -custom (returns 0)
+#   anything else  -> returns 1 (not a custom pseudo-flavor)
+# Note: this strips only the trailing "-custom", so hyphenated bases such as
+# php-react-custom correctly yield base "php-react".
+is_custom_pseudo_flavor() {
+    local flavor="$1"
+
+    if [[ "$flavor" == "custom" ]]; then
+        echo ""
+        return 0
+    fi
+
+    if [[ "$flavor" == *-custom ]]; then
+        # Strip exactly the trailing "-custom" suffix.
+        echo "${flavor%-custom}"
+        return 0
+    fi
+
+    return 1
+}
+
+# Validate a custom pseudo-flavor.
+#   custom         -> always valid (default base)
+#   <base>-custom  -> valid only when <base> is a real flavor in flavors.list
+# Returns 1 (and is not treated as custom) for anything that is not a custom
+# pseudo-flavor. A future real "custom" entry in flavors.list cannot collide
+# because "custom" is handled here as the empty-base pseudo-flavor only.
+validate_custom_pseudo_flavor() {
+    local flavor="$1"
+    local base
+
+    if ! base=$(is_custom_pseudo_flavor "$flavor"); then
+        return 1
+    fi
+
+    # Bare "custom" (empty base) is always valid.
+    if [[ -z "$base" ]]; then
+        return 0
+    fi
+
+    # <base>-custom: the full remainder must be a real flavor.
+    local flavors_file
+    if ! flavors_file=$(_locate_flavors_file); then
+        # No flavors.list available (dev fallback): accept format-valid bases.
+        validate_flavor_name "$base"
+        return $?
+    fi
+
+    if grep -q "^${base}|" "$flavors_file"; then
+        return 0
+    fi
+
+    return 1
+}
+
+# Compute the LOCAL custom image name shared by build and resolution paths.
+# Args: <assistant_name> [base_flavor] [project_path]
+# Naming:
+#   nyiakeeper/{assistant}[-{base}]-custom[-{project-slug}]:latest
+# The project slug is appended ONLY when a project overlay exists for the
+# assistant under project_path (matching build_custom_image() behavior). When
+# project_path is empty/unset, the non-project name is returned (no malformed slug).
+compute_custom_image_name() {
+    local assistant_name="$1"
+    local base_flavor="${2:-}"
+    local project_path="${3:-}"
+
+    local custom_image_name
+    if [[ -n "$base_flavor" ]]; then
+        custom_image_name="nyiakeeper/${assistant_name}-${base_flavor}-custom"
+    else
+        custom_image_name="nyiakeeper/${assistant_name}-custom"
+    fi
+
+    if [[ -n "$project_path" ]]; then
+        local project_overlay="${project_path}/.nyiakeeper/${assistant_name}/overlay/Dockerfile"
+        if [[ -f "$project_overlay" ]]; then
+            local project_slug
+            if project_slug=$(sanitize_project_slug "$project_path"); then
+                custom_image_name="${custom_image_name}-${project_slug}"
+            fi
+        fi
+    fi
+
+    echo "${custom_image_name}:latest"
+}
+
 # Show helpful error message for missing flavors
 show_flavor_error() {
     local assistant="$1"
@@ -906,6 +1028,39 @@ resolve_flavor_image() {
         if ! validate_flavor_name "$flavor"; then
             print_error "Invalid flavor name: $flavor"
             return 1
+        fi
+
+        # Custom pseudo-flavors (Plan 266) short-circuit BEFORE registry logic.
+        # They are LOCAL custom overlay images, never registry/channel tags.
+        local custom_base
+        if custom_base=$(is_custom_pseudo_flavor "$flavor"); then
+            if ! validate_custom_pseudo_flavor "$flavor"; then
+                print_error "Unknown custom flavor base in '$flavor'"
+                print_error "Custom flavors must use a real base: 'custom' or '<base>-custom' (e.g. php-custom)"
+                return 1
+            fi
+
+            local custom_image
+            custom_image=$(compute_custom_image_name "$assistant_name" "$custom_base" "${PROJECT_PATH:-}")
+
+            # Verify the local custom image exists when Docker is available.
+            # Missing/stale overlay or project-slug state must fail with actionable guidance.
+            if command -v docker >/dev/null 2>&1; then
+                if ! docker image inspect "$custom_image" >/dev/null 2>&1; then
+                    local rebuild_base="${custom_base:-}"
+                    print_error "Custom image not found locally: $custom_image"
+                    if [[ -n "$rebuild_base" ]]; then
+                        print_error "Build it first:  nyia-${assistant_name} --build-custom-image --flavor ${rebuild_base}"
+                    else
+                        print_error "Build it first:  nyia-${assistant_name} --build-custom-image"
+                    fi
+                    print_error "Or run it explicitly:  nyia-${assistant_name} --image ${custom_image}"
+                    return 1
+                fi
+            fi
+
+            echo "$custom_image"
+            return 0
         fi
 
         # Build flavor image name with registry support

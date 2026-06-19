@@ -37,3 +37,17 @@ Provide a concise summary:
 
 - End with "Resume point" (1-3 bullets): what to do next if we stop now
 - If critical context is missing, ask up to 2 targeted questions, then proceed with explicit assumptions
+
+## E) Team News (whatsup integration — Nyia mode only, opt-in)
+
+After state reconstruction, optionally surface team news via the `/whatsup` skill:
+
+- Only when `NYIA_WHATSUP_ENABLED=true` AND `NYIA_WHATSUP_AUTO_READ=kickoff`.
+  Resolve both with `nyia config view whatsup_enabled` / `nyia config view
+  whatsup_auto_read` if the CLI is available, otherwise read
+  `.nyiakeeper/nyia.conf` then `~/.config/nyiakeeper/config/nyia.conf`. Defaults
+  are `false` / `never` — if so, skip this section entirely (no token cost).
+- If enabled, run `/whatsup` in read mode and display unread entries. Show any
+  `breaking` entries prominently (visual box) and remind the user they remain
+  flagged until `/whatsup ack <id>`.
+- If `.nyiakeeper/` is absent (standalone mode), skip this section.

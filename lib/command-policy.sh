@@ -20,6 +20,8 @@ readonly NYIA_USER_CONFIG_KEYS=(
     "NYIA_RAG_MODEL"
     "NYIA_TEAM_DIR"
     "NYIA_WORKSPACE_SYNC"
+    "NYIA_WHATSUP_ENABLED"
+    "NYIA_WHATSUP_AUTO_READ"
 )
 
 # === VALID VALUES ===
@@ -28,6 +30,8 @@ readonly NYIA_DEFAULT_COMMAND_MODE="safe"
 readonly NYIA_DEFAULT_RAG_MODEL="nomic-embed-text"
 readonly NYIA_DEFAULT_TEAM_DIR=""
 readonly NYIA_DEFAULT_WORKSPACE_SYNC="false"
+readonly NYIA_DEFAULT_WHATSUP_ENABLED="false"
+readonly NYIA_DEFAULT_WHATSUP_AUTO_READ="never"
 
 # === KEY NAME MAPPING ===
 # Maps user-friendly short names to internal variable names
@@ -39,10 +43,14 @@ _map_config_key_name() {
         rag_model)     echo "NYIA_RAG_MODEL" ;;
         team_dir)      echo "NYIA_TEAM_DIR" ;;
         workspace_sync) echo "NYIA_WORKSPACE_SYNC" ;;
+        whatsup_enabled) echo "NYIA_WHATSUP_ENABLED" ;;
+        whatsup_auto_read) echo "NYIA_WHATSUP_AUTO_READ" ;;
         NYIA_COMMAND_MODE)  echo "NYIA_COMMAND_MODE" ;;
         NYIA_RAG_MODEL)     echo "NYIA_RAG_MODEL" ;;
         NYIA_TEAM_DIR)      echo "NYIA_TEAM_DIR" ;;
         NYIA_WORKSPACE_SYNC) echo "NYIA_WORKSPACE_SYNC" ;;
+        NYIA_WHATSUP_ENABLED) echo "NYIA_WHATSUP_ENABLED" ;;
+        NYIA_WHATSUP_AUTO_READ) echo "NYIA_WHATSUP_AUTO_READ" ;;
         *)             echo "" ;;
     esac
 }
@@ -102,6 +110,24 @@ validate_config_value() {
                 true|false) ;;
                 *)
                     echo "Error: Invalid workspace_sync value '$value'. Valid values: true, false" >&2
+                    return 1
+                    ;;
+            esac
+            ;;
+        NYIA_WHATSUP_ENABLED)
+            case "$value" in
+                true|false) ;;
+                *)
+                    echo "Error: Invalid whatsup_enabled value '$value'. Valid values: true, false" >&2
+                    return 1
+                    ;;
+            esac
+            ;;
+        NYIA_WHATSUP_AUTO_READ)
+            case "$value" in
+                kickoff|never) ;;
+                *)
+                    echo "Error: Invalid whatsup_auto_read value '$value'. Valid values: kickoff, never" >&2
                     return 1
                     ;;
             esac
@@ -600,6 +626,20 @@ read_effective_config_value() {
             local src="${result#*	}"
             echo "$val (source: $src)"
             ;;
+        NYIA_WHATSUP_ENABLED)
+            local result
+            result=$(_resolve_whatsup_config "NYIA_WHATSUP_ENABLED" "$NYIA_DEFAULT_WHATSUP_ENABLED" "$project_path")
+            local val="${result%%	*}"
+            local src="${result#*	}"
+            echo "$val (source: $src)"
+            ;;
+        NYIA_WHATSUP_AUTO_READ)
+            local result
+            result=$(_resolve_whatsup_config "NYIA_WHATSUP_AUTO_READ" "$NYIA_DEFAULT_WHATSUP_AUTO_READ" "$project_path")
+            local val="${result%%	*}"
+            local src="${result#*	}"
+            echo "$val (source: $src)"
+            ;;
         *)
             echo "Error: Unknown key '$key'" >&2
             return 1
@@ -706,6 +746,52 @@ _resolve_workspace_sync_config() {
     esac
 
     printf '%s\t%s\n' "$sync" "$source_label"
+}
+
+# Unified resolver for whatsup config keys (Plan 258)
+# Precedence: project .nyiakeeper/nyia.conf (safe parsed) > global config > default.
+# Used by /kickoff and /checkpoint hooks and by `nyia config view`.
+# Arguments:
+#   $1 - internal key name (NYIA_WHATSUP_ENABLED | NYIA_WHATSUP_AUTO_READ)
+#   $2 - default value to fall back to
+#   $3 - project path (optional — needed to read project config)
+_resolve_whatsup_config() {
+    local key="$1"
+    local default_value="$2"
+    local project_path="${3:-}"
+    local value=""
+    local source_label=""
+    local config_home="${NYIA_CONFIG_HOME:-${HOME}/.config/nyiakeeper/config}"
+
+    # Level 1: Project global config (untrusted — safe parsed)
+    if [[ -z "$value" && -n "$project_path" ]]; then
+        local f="$project_path/.nyiakeeper/nyia.conf"
+        if [[ -f "$f" ]]; then
+            local val
+            val=$(parse_config_file "$f" "$key") && {
+                [[ -n "$val" ]] && value="$val" && source_label="project-global"
+            }
+        fi
+    fi
+
+    # Level 2: Global config (user-controlled — source OK)
+    if [[ -z "$value" ]]; then
+        local f="$config_home/nyia.conf"
+        if [[ -f "$f" ]]; then
+            local val
+            val=$(_source_config_key "$f" "$key") && {
+                [[ -n "$val" ]] && value="$val" && source_label="global"
+            }
+        fi
+    fi
+
+    # Level 3: Default
+    if [[ -z "$value" ]]; then
+        value="$default_value"
+        source_label="default"
+    fi
+
+    printf '%s\t%s\n' "$value" "$source_label"
 }
 
 # Resolver for NYIA_RAG_MODEL (same 9-level pattern as command_mode)

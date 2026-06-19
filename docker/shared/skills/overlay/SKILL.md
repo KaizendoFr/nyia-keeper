@@ -97,9 +97,17 @@ After writing the Dockerfile, output the exact commands the user needs:
 # Build custom image with overlay
 nyia-{assistant} --build-custom-image
 
-# Run the assistant
+# Run the assistant using the custom pseudo-flavor shortcut (Plan 266)
+nyia-{assistant} --flavor custom
+# (or, when built from a base flavor: nyia-{assistant} --flavor {base}-custom)
+
+# Or run the default image
 nyia-{assistant}
 ```
+
+After `--build-custom-image`, prefer the `--flavor custom` / `--flavor {base}-custom`
+shortcut over a long `--image nyiakeeper/{assistant}-custom-{slug}:latest` tag. These
+custom pseudo-flavors are local-only selectors; `--image` remains the explicit fallback.
 
 ## F) Mention Available Templates
 

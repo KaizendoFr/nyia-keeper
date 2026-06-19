@@ -163,6 +163,70 @@ migrate_macos_library_path() {
     fi
 }
 
+# Repair legacy root prompt symlinks left by the pre-rebrand layout.
+#
+# A pre-rebrand project root may contain a generated prompt symlink such as:
+#   OPENCODE.md -> .nyarlathotia/opencode/OPENCODE.md
+# After the .nyarlathotia/ -> .nyiakeeper/ migration, that target no longer
+# exists, so the symlink is broken and crashes RAG indexing (Plan 262).
+#
+# This helper is intentionally CONSERVATIVE. For each known generated prompt
+# filename at the project root, it acts ONLY when ALL of these hold:
+#   1. the path is a SYMLINK (regular files are never touched)
+#   2. its basename is a known generated prompt filename
+#   3. readlink target matches exactly .nyarlathotia/<assistant>/<filename>
+# When matched:
+#   - if .nyiakeeper/<assistant>/<filename> exists -> rewrite the symlink to it
+#   - else (broken legacy link) -> remove the symlink
+# Unrelated symlinks, symlinks with other targets, and regular files are left
+# completely untouched.
+#
+# MIGRATION-COMPAT: remove after v0.2.x
+repair_legacy_prompt_symlinks() {
+    local project_path="$1"
+
+    [[ -n "$project_path" && -d "$project_path" ]] || return 0
+
+    # assistant:prompt-filename map (mirrors get_prompt_filename in
+    # common-functions.sh: claude->CLAUDE.md, gemini->GEMINI.md,
+    # codex->AGENTS.md, opencode->OPENCODE.md, vibe->VIBE.md).
+    local map="claude:CLAUDE.md gemini:GEMINI.md codex:AGENTS.md opencode:OPENCODE.md vibe:VIBE.md"
+
+    local entry assistant filename link_path target expected new_target
+    for entry in $map; do
+        assistant="${entry%%:*}"
+        filename="${entry##*:}"
+        link_path="$project_path/$filename"
+
+        # Guard 1: must be a symlink. Regular files are never touched.
+        [[ -L "$link_path" ]] || continue
+
+        # Guard 3: readlink target must match the legacy layout exactly.
+        target="$(readlink "$link_path" 2>/dev/null)" || continue
+        expected=".nyarlathotia/$assistant/$filename"
+        [[ "$target" == "$expected" ]] || continue
+
+        new_target=".nyiakeeper/$assistant/$filename"
+        if [[ -e "$project_path/$new_target" ]]; then
+            # Rewrite to the migrated target.
+            if rm -f "$link_path" && ln -s "$new_target" "$link_path"; then
+                echo "[MIGRATION] Repaired legacy prompt symlink: $filename -> $new_target" >&2
+            else
+                echo "[MIGRATION] ERROR: Failed to repair prompt symlink: $filename" >&2
+            fi
+        else
+            # Broken legacy link with no migrated target: remove it.
+            if rm -f "$link_path"; then
+                echo "[MIGRATION] Removed broken legacy prompt symlink: $filename" >&2
+            else
+                echo "[MIGRATION] ERROR: Failed to remove broken prompt symlink: $filename" >&2
+            fi
+        fi
+    done
+
+    return 0
+}
+
 export -f _migrate_file_contents _remove_marker_if_exists \
     migrate_config_dir_if_needed migrate_project_dir_if_needed \
-    migrate_macos_library_path
+    migrate_macos_library_path repair_legacy_prompt_symlinks

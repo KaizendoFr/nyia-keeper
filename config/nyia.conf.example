@@ -41,3 +41,13 @@ NYIA_AUTO_BRANCH="false"
 # Both global and project configs are merged (union), not overridden.
 # Example: NYIA_PROTECTED_BRANCHES="develop,staging,production"
 NYIA_PROTECTED_BRANCHES=""
+
+# === WHATSUP NEWS ===
+# Team news distribution via the /whatsup skill. When enabled, lifecycle skills
+# (/kickoff and /checkpoint) integrate with whatsup to surface and prompt for
+# team news. Default disabled — opt-in to avoid extra token cost.
+#   NYIA_WHATSUP_ENABLED   - true | false (default: false)
+#   NYIA_WHATSUP_AUTO_READ - when to auto-read news at session start
+#                            kickoff | never (default: never)
+NYIA_WHATSUP_ENABLED="false"
+NYIA_WHATSUP_AUTO_READ="never"   # kickoff | never

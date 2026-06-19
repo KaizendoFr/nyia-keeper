@@ -381,6 +381,33 @@ ensure_private_in_gitignore() {
     ensure_nyia_gitignore "$@"
 }
 
+# Ensure .nyiakeeper/whatsup/.seen.json is listed in the project's .gitignore (Plan 258)
+# Per-machine whatsup read state must never be committed. Committed news entries
+# under .nyiakeeper/whatsup/entries/ are intentionally NOT ignored.
+# Only appends, never removes lines. Safe to call multiple times (dedup check).
+# Creates .gitignore if it does not exist.
+ensure_whatsup_seen_in_gitignore() {
+    local project_path="$1"
+    local gitignore="$project_path/.gitignore"
+    local entry=".nyiakeeper/whatsup/.seen.json"
+
+    # Check if entry already present (exact line match)
+    if [[ -f "$gitignore" ]]; then
+        if grep -qFx "$entry" "$gitignore" 2>/dev/null; then
+            return 0
+        fi
+    fi
+
+    # Ensure file ends with newline before appending (avoid joining lines)
+    if [[ -f "$gitignore" ]] && [[ -s "$gitignore" ]]; then
+        if [[ "$(tail -c 1 "$gitignore" 2>/dev/null | wc -l)" -eq 0 ]]; then
+            printf '\n' >> "$gitignore"
+        fi
+    fi
+
+    printf '%s\n' "$entry" >> "$gitignore"
+}
+
 # Initialize .nyiakeeper/shared/ and .nyiakeeper/private/ project structure
 # Auto-adds .nyiakeeper/private/ to .gitignore if not already present (Plan 201)
 # Usage: init_shared_structure <project_path> [quiet]
@@ -417,11 +444,21 @@ EOF
         created=$((created + 1))
     fi
 
+    # Create whatsup news entries directory (Plan 258)
+    # Entries are committed (team news); .seen.json read state is gitignored.
+    local whatsup_entries="$project_path/.nyiakeeper/whatsup/entries"
+    if [[ ! -d "$whatsup_entries" ]]; then
+        mkdir -p "$whatsup_entries"
+        created=$((created + 1))
+    fi
+
     # Auto-add Nyia private/session/runtime entries to .gitignore (Plan 248)
     # Only runs when PROJECT_PATH is inside a git work tree — .gitignore has no meaning
     # outside git repos (Plan 236 invariant).
     if git -C "$project_path" rev-parse --is-inside-work-tree &>/dev/null; then
         ensure_nyia_gitignore "$project_path"
+        # Per-machine whatsup read state — must not be committed (Plan 258)
+        ensure_whatsup_seen_in_gitignore "$project_path"
     fi
 
     # In quiet mode, skip all output (used by auto-init)
@@ -1845,7 +1882,10 @@ generate_assistant_prompts() {
 # === DOCKER OPERATIONS ===
 
 
-# Runtime overlay base image selection
+# Runtime overlay base image selection.
+# NOTE (Plan 269): currently has NO production call site (dead/legacy; covered only by tests).
+# build_custom_image() now derives its base via get_image_name()/get_flavor_image_name().
+# Left as-is to avoid risk; if a caller is added, make this channel-aware too.
 determine_overlay_base_image() {
     local current_step="$1"
     local assistant_name="$2"
@@ -1867,16 +1907,18 @@ determine_overlay_base_image() {
 build_custom_image() {
     local assistant_name="$1"
 
-    # Always use ghcr.io as base (end-users don't build from source)
-    local registry=$(get_docker_registry)
     local base_image
 
-    # Determine base image (priority: override > flavor > default)
+    # Determine base image (priority: override > flavor > default).
+    # Reuse the run-path image helpers so the custom-overlay base follows the SAME
+    # registry + channel-aware tag rules as normal image selection (Plan 269). This
+    # fixes the bug where a hardcoded ":latest" base mismatched the host's channel
+    # (e.g. an alpha host building FROM the stale stable ":latest" image).
     if [[ -n "${FLAVOR:-}" ]]; then
-        base_image="${registry}/nyiakeeper-${assistant_name}-${FLAVOR}:latest"
+        base_image="$(get_flavor_image_name "$assistant_name" "$FLAVOR" "false")"
         print_info "Using flavor '${FLAVOR}' as base"
     else
-        base_image="${registry}/nyiakeeper-${assistant_name}:latest"
+        base_image="$(get_image_name "$assistant_name")"
     fi
     
     # Check for Docker
@@ -1926,23 +1968,12 @@ build_custom_image() {
         return 1
     fi
 
-    # Build custom image name — include project slug when project overlay exists
+    # Build custom image name via the shared helper (Plan 266) so build output and
+    # `--flavor custom`/`--flavor <base>-custom` resolution always agree.
+    # The helper appends the project slug only when the project overlay exists and
+    # PROJECT_PATH is set, matching the previous inline logic.
     local custom_image_name
-    if [[ -n "${FLAVOR:-}" ]]; then
-        custom_image_name="nyiakeeper/${assistant_name}-${FLAVOR}-custom"
-    else
-        custom_image_name="nyiakeeper/${assistant_name}-custom"
-    fi
-
-    # Append project slug when project overlay is present (prevents cross-project overwrites)
-    if [[ "$has_project_overlay" == "true" ]]; then
-        local project_slug
-        project_slug=$(sanitize_project_slug "$PROJECT_PATH") || {
-            print_error "Failed to derive project slug from PROJECT_PATH: $PROJECT_PATH"
-            return 1
-        }
-        custom_image_name="${custom_image_name}-${project_slug}"
-    fi
+    custom_image_name=$(compute_custom_image_name "$assistant_name" "${FLAVOR:-}" "$PROJECT_PATH")
 
     local build_context="${PROJECT_PATH}"
     
@@ -1984,7 +2015,15 @@ build_custom_image() {
         print_success "Custom image built successfully: $custom_image_name"
         print_info ""
         print_info "To use your custom image:"
-        print_info "  nyia-${assistant_name} --image $custom_image_name"
+        # Teach the custom pseudo-flavor shortcut (Plan 266); --image stays as fallback.
+        local custom_flavor_shortcut
+        if [[ -n "${FLAVOR:-}" ]]; then
+            custom_flavor_shortcut="${FLAVOR}-custom"
+        else
+            custom_flavor_shortcut="custom"
+        fi
+        print_info "  nyia-${assistant_name} --flavor ${custom_flavor_shortcut}   # shortcut"
+        print_info "  nyia-${assistant_name} --image $custom_image_name   # explicit fallback"
     else
         print_error "Failed to build custom image"
         rm -f "$temp_dockerfile"
@@ -3247,7 +3286,12 @@ select_docker_image() {
             fi
             print_status "Image selection: Using specified image: $selected_image" >&2
         elif [[ -n "$FLAVOR" ]]; then
-            print_status "Image selection: Using flavor '$FLAVOR': $selected_image" >&2
+            # Distinguish local custom pseudo-flavors (Plan 266) from registry flavors.
+            if declare -f is_custom_pseudo_flavor >/dev/null && is_custom_pseudo_flavor "$FLAVOR" >/dev/null 2>&1; then
+                print_status "Image selection: Using custom flavor '$FLAVOR': $selected_image" >&2
+            else
+                print_status "Image selection: Using flavor '$FLAVOR': $selected_image" >&2
+            fi
         else
             print_status "Image selection: Using default image: $selected_image" >&2
         fi
@@ -3284,11 +3328,17 @@ list_assistant_flavors() {
     fi
 
     echo ""
+    echo "Custom local selectors (Plan 266 — built with --build-custom-image):"
+    echo "  custom          - local default-base custom overlay image"
+    echo "  <flavor>-custom - local custom image built from <flavor> (e.g. php-custom, php-react-custom)"
+    echo ""
     echo "Usage:"
     echo "  nyia-${assistant_name} --flavor python"
     echo "  nyia-${assistant_name} --flavor node"
+    echo "  nyia-${assistant_name} --flavor php-custom    # local custom image"
     echo ""
-    echo "Note: Flavors are pulled from registry on first use."
+    echo "Note: Registry flavors are pulled on first use; custom selectors are local-only"
+    echo "      and must be built first with: nyia-${assistant_name} --build-custom-image [--flavor <base>]"
 }
 
 # === ASSISTANT EXECUTION ===
@@ -3356,6 +3406,13 @@ run_assistant() {
     # Check git exclusions on first run
     check_git_exclusions "$project_path" "$prompt_filename"
     
+    # MIGRATION-COMPAT: repair stale legacy root prompt symlinks (e.g.
+    # OPENCODE.md -> .nyarlathotia/...) before generating prompts, so RAG
+    # indexing inside the container never sees a broken legacy symlink.
+    if declare -f repair_legacy_prompt_symlinks &>/dev/null; then
+        repair_legacy_prompt_symlinks "$project_path"
+    fi
+
     # Generate assistant prompts before container start
     if ! generate_assistant_prompts "$assistant_name" "$assistant_cli" "$project_path"; then
         print_error "Failed to generate prompts for $assistant_name"

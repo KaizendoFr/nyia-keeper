@@ -127,6 +127,77 @@ Nyia Keeper does not manage synchronization of the team directory. Common approa
 | NFS/SMB mount | Real-time access | Requires network infrastructure |
 | Symlink to monorepo subdirectory | Zero-copy, always current | Ties to monorepo |
 
+## Announcing Changes with `/whatsup`
+
+Sharing skills, agents, and prompts (above) makes resources *available* to the
+team. The `/whatsup` skill makes changes to them *discoverable*: when a teammate
+ships a new skill, edits a prompt, or changes a convention, they publish a short
+news entry, and everyone else sees it instead of finding out by accident.
+
+> "Nyia" (にゃ) is the cat that watches your code — `/whatsup` is the cat telling
+> you what changed.
+
+### Commands
+
+| Command | What it does |
+|---------|--------------|
+| `/whatsup` | Show news entries you haven't read yet, newest/most severe first |
+| `/whatsup add` | Publish a news entry (draft → confirm → commit) |
+| `/whatsup list` | List all entries with a read / unread / hidden marker |
+| `/whatsup ack <id>` | Acknowledge an entry (dismisses a `breaking` warning) |
+| `/whatsup hide <id>` | Permanently hide an entry ("not for me") |
+
+### How entries are stored
+
+Each entry is a single markdown file with YAML frontmatter, committed to the
+project so the team shares it via git:
+
+```
+.nyiakeeper/whatsup/
+├── entries/2026/06/2026-06-04-a3f-001.md   # one file per entry (committed)
+└── .seen.json                              # your per-machine read state (gitignored)
+```
+
+One file per entry means **two people can publish at the same time without merge
+conflicts**. Your read state (`.seen.json`) is per-machine and never committed.
+
+Outside a Nyia project (no `.nyiakeeper/`), `/whatsup` still works in *standalone
+mode*, storing entries under `.whatsup/` with manual invocation only.
+
+### Severity levels
+
+- **info** — inline note, low priority.
+- **important** — pulled to the top of the list.
+- **breaking** — shown in a loud visual box and **stays flagged on every read**
+  until you run `/whatsup ack <id>`. V1 is a visual warning only; it does not block.
+
+### Automatic news at session start (opt-in)
+
+`/whatsup` integrates with the `/kickoff` and `/checkpoint` skills, but only when
+enabled in config (default: off):
+
+```bash
+# Enable whatsup and surface unread news automatically at session start
+nyia config global whatsup_enabled=true
+nyia config global whatsup_auto_read=kickoff
+```
+
+| Config key | Values | Default | Effect |
+|------------|--------|---------|--------|
+| `whatsup_enabled` (`NYIA_WHATSUP_ENABLED`) | `true` \| `false` | `false` | Master switch for lifecycle hooks |
+| `whatsup_auto_read` (`NYIA_WHATSUP_AUTO_READ`) | `kickoff` \| `never` | `never` | Show unread news during `/kickoff` |
+
+When enabled, `/checkpoint` also detects when a session changed meta-files
+(skills, prompts, shared config) and offers to publish a `/whatsup` entry.
+
+### Security
+
+- **No secrets in entries.** Entries are committed and shared, so `/whatsup add`
+  summarizes changes by file path and your own words only — it never dumps config,
+  prompt, credential, or `.env` contents into an entry.
+- Publishing stages **only the new entry file** (never `git add .`), and shows you
+  the staged diff before committing.
+
 ## Troubleshooting
 
 ### "Team dir configured but does not exist"
