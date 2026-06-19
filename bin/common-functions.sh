@@ -3856,7 +3856,12 @@ prompt_branch_on_protected() {
     local current_branch="$2"
     local project_path="$3"
 
-    print_warning "You're on protected branch '$current_branch'."
+    # Plan 265: identify the triggering repo in the canonical Plan 222 format
+    # "basename (full_path)" so workspace-mode users know which RW repo to act on.
+    local repo_label
+    repo_label="$(basename "$project_path") ($project_path)"
+
+    print_warning "You're on protected branch '$current_branch' in $repo_label."
 
     if [[ -t 0 ]]; then
         local user_input default_name
@@ -3878,7 +3883,7 @@ prompt_branch_on_protected() {
     else
         local default_name
         default_name=$(resolve_branch_on_protected "$assistant_name" "")
-        print_error "On protected branch '$current_branch' (non-interactive mode)"
+        print_error "On protected branch '$current_branch' in $repo_label (non-interactive mode)"
         print_fix "Use: nyia-${assistant_name} --work-branch $default_name --create"
         exit 1
     fi
