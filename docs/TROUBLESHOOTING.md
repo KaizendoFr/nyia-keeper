@@ -34,7 +34,7 @@ line to your shell profile):
 
 ```bash
 # Linux
-source ~/.config/nyiakeeper/env
+export PATH="$HOME/.local/bin:$PATH"
 
 # macOS (the launchers install to ~/.local/bin)
 export PATH="$HOME/.local/bin:$PATH"

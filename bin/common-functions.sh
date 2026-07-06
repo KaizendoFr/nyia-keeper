@@ -1991,6 +1991,14 @@ check_git_repository() {
 }
 
 check_docker_available() {
+    # Steer WSL1 users (Plan 291). This is the real launch preflight (called by
+    # check_requirements_fast → run_assistant), so a WSL1 user sees an actionable WSL2 message
+    # before the opaque Docker failure. Non-fatal; real WSL2 / native Linux / macOS are
+    # unaffected because is_wsl1 is a positive match. Reaches both editions via the library.
+    if is_wsl1 2>/dev/null; then
+        print_warning "WSL1 detected — Docker is unavailable on WSL1; Nyia Keeper requires WSL2."
+        print_warning "Upgrade: 'wsl --set-version <distro> 2', then enable Docker Desktop WSL integration. See docs/WSL2_SETUP.md."
+    fi
     if ! command -v docker >/dev/null 2>&1; then
         print_error "Docker not available"
         print_fix "Install Docker:"

@@ -51,21 +51,47 @@ is_linux() {
     [[ "$(get_platform)" == "linux" ]]
 }
 
-# WSL2 detection — cached to avoid repeated /proc/version reads
-# Returns true when running inside Windows Subsystem for Linux v2
+# --- WSL detection (Plan 291) ---
+# Distinguishes WSL2 (supported) from WSL1 (unsupported — no Docker socket integration).
+# Kernel markers: WSL2 = "...-microsoft-standard-WSL2" (or early-preview "...-microsoft-standard");
+# WSL1 = "...-Microsoft". Test seams (_NYIA_PROC_VERSION) let BATS inject kernel strings.
+_nyia_proc_version() { cat "${_NYIA_PROC_VERSION:-/proc/version}" 2>/dev/null; }
+# A positive "this is WSL" signal, independent of the kernel string — so a Hyper-V/Azure
+# native Linux guest that merely has "Microsoft" in /proc/version is NOT treated as WSL.
+_nyia_has_wsl_signal() {
+    [[ -n "${WSL_DISTRO_NAME:-}" ]] && return 0
+    [[ -e /run/WSL ]] && return 0
+    [[ -e /proc/sys/fs/binfmt_misc/WSLInterop ]] && return 0
+    return 1
+}
+
+# is_wsl2 — true only for genuine WSL2. Cached.
 _NYIA_IS_WSL2=""
 is_wsl2() {
     if [[ -z "$_NYIA_IS_WSL2" ]]; then
-        if [[ -f /proc/version ]] && grep -qi "microsoft" /proc/version 2>/dev/null; then
-            _NYIA_IS_WSL2="true"
-        elif [[ -n "${WSL_DISTRO_NAME:-}" ]]; then
-            # Fallback: WSL sets this env var in all distributions
+        local pv; pv="$(_nyia_proc_version)"
+        if [[ "$pv" == *microsoft-standard* || "$pv" == *WSL2* ]]; then
+            _NYIA_IS_WSL2="true"                                    # explicit WSL2 kernel
+        elif _nyia_has_wsl_signal && [[ "$pv" != *[Mm]icrosoft* ]]; then
+            # WSL signal but no microsoft kernel string (custom kernel via .wslconfig, or a
+            # test mock) → fail OPEN to WSL2 rather than mis-flag as WSL1.
             _NYIA_IS_WSL2="true"
         else
-            _NYIA_IS_WSL2="false"
+            _NYIA_IS_WSL2="false"                                  # WSL1, or not WSL at all
         fi
     fi
     [[ "$_NYIA_IS_WSL2" == "true" ]]
+}
+
+# is_wsl1 — true ONLY for genuine WSL1 (a positive WSL signal + a "microsoft" kernel that is
+# NOT a WSL2 kernel). Defined POSITIVELY — never as `! is_wsl2` (that would false-reject a
+# custom-kernel WSL2). Used to steer/reject WSL1 users toward WSL2.
+is_wsl1() {
+    _nyia_has_wsl_signal || return 1
+    local pv; pv="$(_nyia_proc_version)"
+    [[ "$pv" == *[Mm]icrosoft* ]] || return 1
+    [[ "$pv" == *microsoft-standard* || "$pv" == *WSL2* ]] && return 1
+    return 0
 }
 
 # Docker Desktop detection — true for macOS and WSL2

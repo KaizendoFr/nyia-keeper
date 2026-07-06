@@ -7,7 +7,7 @@ Get up and running with AI-powered development assistants in under 2 minutes.
 ### Linux
 ```bash
 curl -fsSL https://raw.githubusercontent.com/KaizendoFr/nyia-keeper/main/install.sh | bash
-source ~/.config/nyiakeeper/env
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
 ### macOS
@@ -15,6 +15,16 @@ source ~/.config/nyiakeeper/env
 curl -fsSL https://raw.githubusercontent.com/KaizendoFr/nyia-keeper/main/scripts/install-macos.sh | bash
 ```
 See [macOS Setup Guide](docs/MACOS_SETUP.md) for Docker Desktop installation and troubleshooting.
+
+### Windows (WSL2)
+Run inside a **WSL2 terminal (Ubuntu), not PowerShell** — Nyia Keeper is a bash + Docker
+tool. Install [Docker Desktop](https://docs.docker.com/desktop/install/windows-install/)
+(enable the WSL2 engine + WSL Integration), then in your WSL2 terminal:
+```bash
+curl -fsSL https://raw.githubusercontent.com/KaizendoFr/nyia-keeper/main/install.sh | bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+See [Windows (WSL2) Setup Guide](docs/WSL2_SETUP.md). (WSL1 is not supported.)
 
 ## Choose Your Assistant
 

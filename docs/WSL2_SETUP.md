@@ -8,7 +8,7 @@ From inside a **WSL2 terminal** (Ubuntu, Debian, etc.), run the standard Linux i
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/KaizendoFr/nyia-keeper/main/install.sh | bash
-source ~/.config/nyiakeeper/env
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
 The same installer used for Linux works unmodified in WSL2.

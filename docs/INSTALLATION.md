@@ -19,7 +19,7 @@ This installs Nyia Keeper to `~/.local/nyiakeeper` and writes a PATH entry to
 `~/.config/nyiakeeper/env`. Activate it (and add this line to your shell profile):
 
 ```bash
-source ~/.config/nyiakeeper/env
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
 Docker Engine must be installed and running (`docker info` should succeed), and your user

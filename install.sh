@@ -7,6 +7,31 @@
 
 set -euo pipefail
 
+# --- WSL1 guard (Plan 291) ---
+# WSL1 lacks Docker socket integration, so Nyia Keeper cannot run there. Reject early,
+# BEFORE downloading anything, with an actionable steer to WSL2. Defined positively (a real
+# WSL signal + a "microsoft" kernel that is NOT a WSL2 kernel) so a custom-kernel WSL2 or a
+# Hyper-V/Azure native-Linux guest is never false-rejected. Mirrors is_wsl1() in
+# bin/common/shared.sh (kept inline: this runs before the tarball exists).
+_nyia_is_wsl1() {
+    [[ -n "${WSL_DISTRO_NAME:-}" || -e /run/WSL || -e /proc/sys/fs/binfmt_misc/WSLInterop ]] || return 1
+    local pv; pv="$(cat /proc/version 2>/dev/null)"
+    [[ "$pv" == *[Mm]icrosoft* ]] || return 1
+    [[ "$pv" == *microsoft-standard* || "$pv" == *WSL2* ]] && return 1
+    return 0
+}
+if _nyia_is_wsl1; then
+    echo "❌ WSL1 is not supported (it lacks Docker socket integration)." >&2
+    echo "" >&2
+    echo "Install WSL2, then re-run this inside your WSL2 terminal:" >&2
+    echo "  1. PowerShell (Admin):  wsl --install         (or: wsl --set-version <distro> 2)" >&2
+    echo "  2. Docker Desktop -> Settings -> Resources -> WSL Integration -> enable your distro" >&2
+    echo "  3. Reopen your WSL2 (Ubuntu) terminal and re-run this installer" >&2
+    echo "" >&2
+    echo "See: https://github.com/KaizendoFr/nyia-keeper/blob/main/docs/WSL2_SETUP.md" >&2
+    exit 1
+fi
+
 echo "🚀 Installing Nyia Keeper..."
 
 # Configuration
@@ -85,7 +110,7 @@ if [[ "$RELEASE_TYPE" == channel:* ]]; then
         echo "❌ Could not resolve channel '$CHANNEL_NAME' from manifest"
         echo "   Manifest URL: $CHANNELS_MANIFEST_URL"
         echo "   Falling back to newest published release..."
-        RELEASE_TYPE="tags/v0.1.0-alpha.102"
+        RELEASE_TYPE="tags/v0.1.0-alpha.103"
     else
         echo "📦 Channel '$CHANNEL_NAME' resolved to: $TAG_NAME"
     fi

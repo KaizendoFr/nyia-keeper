@@ -8,6 +8,30 @@
 
 set -e
 
+# --- WSL1 guard (Plan 291) ---
+# WSL1 lacks Docker socket integration → reject BEFORE writing any files, with a steer to
+# WSL2. Positive match (real WSL signal + microsoft-not-WSL2 kernel) so custom-kernel WSL2 and
+# Hyper-V/Azure native Linux are never false-rejected. Mirrors is_wsl1() in bin/common/shared.sh
+# (kept inline so the bootstrapper has no sourcing dependency).
+_nyia_is_wsl1() {
+    [[ -n "${WSL_DISTRO_NAME:-}" || -e /run/WSL || -e /proc/sys/fs/binfmt_misc/WSLInterop ]] || return 1
+    local pv; pv="$(cat /proc/version 2>/dev/null)"
+    [[ "$pv" == *[Mm]icrosoft* ]] || return 1
+    [[ "$pv" == *microsoft-standard* || "$pv" == *WSL2* ]] && return 1
+    return 0
+}
+if _nyia_is_wsl1; then
+    echo "❌ WSL1 is not supported (it lacks Docker socket integration)." >&2
+    echo "" >&2
+    echo "Install WSL2, then re-run this inside your WSL2 terminal:" >&2
+    echo "  1. PowerShell (Admin):  wsl --install         (or: wsl --set-version <distro> 2)" >&2
+    echo "  2. Docker Desktop -> Settings -> Resources -> WSL Integration -> enable your distro" >&2
+    echo "  3. Reopen your WSL2 (Ubuntu) terminal and re-run this installer" >&2
+    echo "" >&2
+    echo "See: https://github.com/KaizendoFr/nyia-keeper/blob/main/docs/WSL2_SETUP.md" >&2
+    exit 1
+fi
+
 # Installation paths
 INSTALL_DIR="${HOME}/.local"
 BIN_DIR="${INSTALL_DIR}/bin"
