@@ -86,6 +86,22 @@ _nyia() {
                 esac
             fi
             ;;
+        profile)
+            if (( CURRENT == 3 )); then
+                local -a profile_cmds=(
+                    'list:List profiles (active marker + mode)'
+                    'create:Create an auth-only profile or a --persona'
+                    'help:Show profile help'
+                )
+                _describe 'profile command' profile_cmds
+            elif (( CURRENT >= 4 )) && [[ "${words[3]}" == "create" ]]; then
+                if [[ "${words[CURRENT-1]}" == "--from" ]]; then
+                    compadd -- tech non-tech empty
+                else
+                    compadd -- --persona --from
+                fi
+            fi
+            ;;
         update)
             if (( CURRENT == 3 )); then
                 local -a update_cmds=(
@@ -121,6 +137,7 @@ _nyia_assistant() {
         '--force:Force operation (with --login)'
         '--shell:Start interactive bash shell in container'
         '--image:Select specific Docker image'
+        '--profile:Named auth profile (multiple accounts per assistant)'
         '--flavor:Select assistant flavor/variant'
         '--agent:Select agent persona for this session'
         '--command-mode:Set command approval mode (safe or full)'
@@ -153,7 +170,7 @@ _nyia_assistant() {
             compadd -- safe full
             return
             ;;
-        --image|--flavor|--agent|--path|--base-branch|--work-branch|-w)
+        --image|--profile|--flavor|--agent|--path|--base-branch|--work-branch|-w)
             # These take a value — no static completions
             return
             ;;

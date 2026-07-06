@@ -271,11 +271,15 @@ All RW repos will be rolled back to their original branches when this happens. R
 
 ## Workspace Root as a Project
 
-If your workspace root directory contains a `.git/` directory, Nyia automatically treats it as a full project with branch safety (assistant branch creation, cleanup, and sync) alongside managing your workspace repos.
+The directory you launch Nyia from is the **workspace root** — the main workspace itself. You do not need a separate, empty directory to host a workspace.
 
-If the root has no `.git/`, it's treated as an orchestration directory only — branch operations are skipped for the root and only applied to workspace repos.
+**Starting from an existing repo is fully supported.** If the workspace root contains a `.git/` directory, Nyia automatically treats it as a full project — with branch safety (assistant branch creation, cleanup, and sync) — *alongside* the additional repos you list. Those additional repos are mounted under `repos/`; the root project is the workspace root itself and is **not** placed in `repos/`.
 
-This is automatic — no extra flags needed.
+Because the root is already the main workspace, **do not list the root (current) directory in `workspace.conf`** — Nyia rejects it with an error. Listing only the *additional* repos is correct; "the root project is not under `repos/`" is by design.
+
+**A fresh, non-git root also works.** If the root has no `.git/`, it's treated as an orchestration directory only — branch operations are skipped for the root and applied solely to the workspace repos.
+
+This is automatic — no extra flags needed. In short: launch from a repo *or* from a plain directory; either is valid.
 
 ## Unsupported: Subdirectories of Git Repositories
 

@@ -1,0 +1,25 @@
+# Nyia Keeper — egress firewall allowlist (Plan 280b)
+#
+# Active ONLY when `network_egress_policy=restrict-local` (see docs/NETWORK_EGRESS.md).
+# Under that policy the assistant has FULL web egress but the local network is denied
+# by default. Each line here punches a hole for ONE local destination.
+#
+# Format (exactly three fields):
+#     <proto> <host> <port>
+#   proto : tcp | udp
+#   host  : a hostname or IPv4 literal (resolved when the firewall is compiled).
+#           NO CIDRs, NO 0.0.0.0, NO wildcards.
+#   port  : a single port 1..65535 (no ranges).
+#
+# Layering (merged, all applied): global ~/.config/nyiakeeper/config/network-allow.conf,
+# then project .nyiakeeper/network-allow.conf, then .nyiakeeper/private/network-allow.conf.
+#
+# Copy to .nyiakeeper/network-allow.conf and edit. Changes take effect on next launch;
+# the running session cannot modify the firewall (NET_ADMIN is dropped before it starts).
+
+# Allow SSH to the test sidecar (akopso Plan 58) — runs tests over a forced-command shell.
+tcp sidecar 2222
+
+# NOTE: a LAN database is NOT listed, so it stays BLOCKED. To deny mysql you do nothing;
+# to ALLOW it you would have to add a line like the following (left commented = denied):
+#   tcp 192.168.1.50 3306      # <- only if you explicitly want the assistant to reach it

@@ -19,9 +19,14 @@ readonly NYIA_USER_CONFIG_KEYS=(
     "NYIA_COMMAND_MODE"
     "NYIA_RAG_MODEL"
     "NYIA_TEAM_DIR"
+    "NYIA_MARKETPLACE_URL"
     "NYIA_WORKSPACE_SYNC"
     "NYIA_WHATSUP_ENABLED"
     "NYIA_WHATSUP_AUTO_READ"
+    "NYIA_AUTO_BRANCH"
+    "NYIA_GIT_HISTORY_CUTOFF"
+    "NYIA_NETWORK_EGRESS_POLICY"
+    "NYIA_AUTH_PROFILE"
 )
 
 # === VALID VALUES ===
@@ -29,9 +34,15 @@ readonly NYIA_VALID_COMMAND_MODES=("safe" "full")
 readonly NYIA_DEFAULT_COMMAND_MODE="safe"
 readonly NYIA_DEFAULT_RAG_MODEL="nomic-embed-text"
 readonly NYIA_DEFAULT_TEAM_DIR=""
+readonly NYIA_DEFAULT_MARKETPLACE_URL=""
 readonly NYIA_DEFAULT_WORKSPACE_SYNC="false"
 readonly NYIA_DEFAULT_WHATSUP_ENABLED="false"
 readonly NYIA_DEFAULT_WHATSUP_AUTO_READ="never"
+readonly NYIA_DEFAULT_AUTO_BRANCH="false"
+readonly NYIA_DEFAULT_GIT_HISTORY_CUTOFF=""
+readonly NYIA_VALID_NETWORK_EGRESS_POLICIES=("off" "restrict-local")
+readonly NYIA_DEFAULT_NETWORK_EGRESS_POLICY="off"
+readonly NYIA_DEFAULT_AUTH_PROFILE="default"
 
 # === KEY NAME MAPPING ===
 # Maps user-friendly short names to internal variable names
@@ -42,15 +53,25 @@ _map_config_key_name() {
         command_mode)  echo "NYIA_COMMAND_MODE" ;;
         rag_model)     echo "NYIA_RAG_MODEL" ;;
         team_dir)      echo "NYIA_TEAM_DIR" ;;
+        marketplace_url) echo "NYIA_MARKETPLACE_URL" ;;
         workspace_sync) echo "NYIA_WORKSPACE_SYNC" ;;
         whatsup_enabled) echo "NYIA_WHATSUP_ENABLED" ;;
         whatsup_auto_read) echo "NYIA_WHATSUP_AUTO_READ" ;;
+        auto_branch)       echo "NYIA_AUTO_BRANCH" ;;
+        git_history_cutoff) echo "NYIA_GIT_HISTORY_CUTOFF" ;;
+        network_egress_policy) echo "NYIA_NETWORK_EGRESS_POLICY" ;;
+        auth_profile) echo "NYIA_AUTH_PROFILE" ;;
         NYIA_COMMAND_MODE)  echo "NYIA_COMMAND_MODE" ;;
         NYIA_RAG_MODEL)     echo "NYIA_RAG_MODEL" ;;
         NYIA_TEAM_DIR)      echo "NYIA_TEAM_DIR" ;;
+        NYIA_MARKETPLACE_URL) echo "NYIA_MARKETPLACE_URL" ;;
         NYIA_WORKSPACE_SYNC) echo "NYIA_WORKSPACE_SYNC" ;;
         NYIA_WHATSUP_ENABLED) echo "NYIA_WHATSUP_ENABLED" ;;
         NYIA_WHATSUP_AUTO_READ) echo "NYIA_WHATSUP_AUTO_READ" ;;
+        NYIA_AUTO_BRANCH) echo "NYIA_AUTO_BRANCH" ;;
+        NYIA_GIT_HISTORY_CUTOFF) echo "NYIA_GIT_HISTORY_CUTOFF" ;;
+        NYIA_NETWORK_EGRESS_POLICY) echo "NYIA_NETWORK_EGRESS_POLICY" ;;
+        NYIA_AUTH_PROFILE) echo "NYIA_AUTH_PROFILE" ;;
         *)             echo "" ;;
     esac
 }
@@ -76,6 +97,41 @@ validate_command_mode() {
     esac
 }
 
+# Validate a marketplace URL value.
+# Accepts git-clonable URLs only:
+#   - scheme URLs:  https://host/path, http://host/path, git://host/path, ssh://[user@]host[:port]/path
+#   - scp-like:     [user@]host:path  (e.g. git@github.com:org/repo.git)
+# Returns 0 if valid, 1 if not. No network access (syntactic check only).
+validate_marketplace_url() {
+    local url="$1"
+    [[ -z "$url" ]] && return 1
+
+    # Reject command-substitution / injection characters defensively.
+    case "$url" in
+        *'$('* | *'`'* | *'${'* | *';'* | *'&'* | *'|'* | *' '*) return 1 ;;
+    esac
+
+    # Scheme-based URLs (https/http/git/ssh require a host before the path)
+    if [[ "$url" =~ ^(https|http|git|ssh)://[^/]+/.+ ]]; then
+        return 0
+    fi
+
+    # Local filesystem repos: file:///abs/path (git-clonable; used for local
+    # mirrors and tests). Requires an absolute path after the scheme.
+    if [[ "$url" =~ ^file:///.+ ]]; then
+        return 0
+    fi
+
+    # scp-like syntax: [user@]host:path (host must not contain a slash before ':').
+    # Reject anything containing "://" here — that is a (mis-spelled) scheme URL,
+    # not scp syntax, and only the schemes whitelisted above are valid.
+    if [[ "$url" != *"://"* ]] && [[ "$url" =~ ^([A-Za-z0-9._~-]+@)?[A-Za-z0-9._-]+:.+ ]]; then
+        return 0
+    fi
+
+    return 1
+}
+
 # Validate a config value for a given key
 # Returns 0 if valid, 1 if not. Writes error to stderr.
 validate_config_value() {
@@ -83,6 +139,20 @@ validate_config_value() {
     local value="$2"
     local mapped
     mapped=$(_map_config_key_name "$key")
+
+    # Plan 282 (codex H3): config values are written as KEY="value" and later
+    # sourced, so reject shell metacharacters that could inject shell or break
+    # round-tripping. No registered key needs these characters.
+    case "$value" in
+        *'"'*|*'`'*|*'$'*|*'\'*)
+            echo "Error: value for '$key' contains unsupported characters (one of: \" \` \$ \\)." >&2
+            return 1
+            ;;
+    esac
+    if [[ "$value" == *$'\n'* ]]; then
+        echo "Error: value for '$key' must not contain newlines." >&2
+        return 1
+    fi
 
     case "$mapped" in
         NYIA_COMMAND_MODE)
@@ -102,6 +172,19 @@ validate_config_value() {
             # Any non-empty string is valid (directory path)
             if [[ -z "$value" ]]; then
                 echo "Error: team_dir cannot be empty. Use 'nyia config global team_dir=' to unset." >&2
+                return 1
+            fi
+            ;;
+        NYIA_MARKETPLACE_URL)
+            # Must look like a git URL: https://, http://, git://, ssh://,
+            # or scp-like syntax (user@host:path / host:path). Unsetting handled
+            # by the caller before validation (empty value clears the key).
+            if [[ -z "$value" ]]; then
+                echo "Error: marketplace_url cannot be empty. Use 'nyia config global marketplace_url=' to unset." >&2
+                return 1
+            fi
+            if ! validate_marketplace_url "$value"; then
+                echo "Error: Invalid marketplace_url '$value'. Expected a git URL (https://, ssh://, git://, or user@host:path)." >&2
                 return 1
             fi
             ;;
@@ -131,6 +214,41 @@ validate_config_value() {
                     return 1
                     ;;
             esac
+            ;;
+        NYIA_AUTO_BRANCH)
+            case "$value" in
+                true|false) ;;
+                *)
+                    echo "Error: Invalid auto_branch value '$value'. Valid values: true, false" >&2
+                    return 1
+                    ;;
+            esac
+            ;;
+        NYIA_GIT_HISTORY_CUTOFF)
+            # Plan 278 v1: a date (YYYY-MM-DD) or a tag/ref — NOT a bare commit SHA
+            # (git --shallow-exclude rejects bare SHAs; see plan review M2). Empty = unset.
+            if [[ -n "$value" && "$value" =~ ^[0-9a-fA-F]{7,40}$ ]]; then
+                echo "Error: git_history_cutoff must be a date (YYYY-MM-DD) or a tag, not a commit SHA (Plan 278 v1)." >&2
+                return 1
+            fi
+            ;;
+        NYIA_NETWORK_EGRESS_POLICY)
+            case "$value" in
+                off|restrict-local) ;;
+                *)
+                    echo "Error: Invalid network_egress_policy value '$value'. Valid values: off, restrict-local" >&2
+                    return 1
+                    ;;
+            esac
+            ;;
+        NYIA_AUTH_PROFILE)
+            # Profile name becomes a filesystem path + docker -v arg; strict slug only,
+            # no traversal. (Plan 286) 'default' = the legacy/global creds.
+            if [[ "$value" == "default" ]]; then :
+            elif [[ "$value" == *".."* ]] || [[ ! "$value" =~ ^[A-Za-z0-9]([A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$ ]]; then
+                echo "Error: Invalid auth_profile '$value'. Use letters, digits, . _ - (no '..', '/', ':' or spaces)." >&2
+                return 1
+            fi
             ;;
         *)
             echo "Error: Unknown config key '$key'" >&2
@@ -395,6 +513,17 @@ resolve_and_export_command_mode() {
     export NYIA_COMMAND_MODE_SOURCE="${result#*	}"
 }
 
+# Convenience: resolve and export the effective network egress policy (Plan 280a).
+# Sets NYIA_EFFECTIVE_EGRESS_POLICY (off|restrict-local) for the launch path to read.
+# Must be called directly (not in a subshell) for the export to persist.
+resolve_and_export_egress_policy() {
+    local assistant_name="${1:-}"
+    local project_path="${2:-}"
+    local policy
+    policy=$(resolve_config_value_raw "NYIA_NETWORK_EGRESS_POLICY" "$assistant_name" "$project_path")
+    export NYIA_EFFECTIVE_EGRESS_POLICY="${policy:-off}"
+}
+
 # Convenience: resolve and export NYIA_RAG_MODEL from config precedence.
 # Must be called directly (not in a subshell) for the exports to persist.
 resolve_and_export_rag_model() {
@@ -619,6 +748,17 @@ read_effective_config_value() {
                 echo "(not configured)"
             fi
             ;;
+        NYIA_MARKETPLACE_URL)
+            local result
+            result=$(_resolve_marketplace_url_config "$project_path")
+            local url="${result%%	*}"
+            local src="${result#*	}"
+            if [[ -n "$url" ]]; then
+                echo "$url (source: $src)"
+            else
+                echo "(not configured)"
+            fi
+            ;;
         NYIA_WORKSPACE_SYNC)
             local result
             result=$(_resolve_workspace_sync_config "$project_path")
@@ -640,8 +780,77 @@ read_effective_config_value() {
             local src="${result#*	}"
             echo "$val (source: $src)"
             ;;
+        NYIA_AUTO_BRANCH)
+            # Reuses the generic project-global -> global -> default scoped resolver.
+            local result
+            result=$(_resolve_whatsup_config "NYIA_AUTO_BRANCH" "$NYIA_DEFAULT_AUTO_BRANCH" "$project_path")
+            local val="${result%%	*}"
+            local src="${result#*	}"
+            echo "$val (source: $src)"
+            ;;
+        NYIA_GIT_HISTORY_CUTOFF)
+            local result
+            result=$(_resolve_whatsup_config "NYIA_GIT_HISTORY_CUTOFF" "$NYIA_DEFAULT_GIT_HISTORY_CUTOFF" "$project_path")
+            local val="${result%%	*}"
+            local src="${result#*	}"
+            if [[ -n "$val" ]]; then
+                echo "$val (source: $src)"
+            else
+                echo "(not configured)"
+            fi
+            ;;
+        NYIA_NETWORK_EGRESS_POLICY)
+            local result
+            result=$(_resolve_whatsup_config "NYIA_NETWORK_EGRESS_POLICY" "$NYIA_DEFAULT_NETWORK_EGRESS_POLICY" "$project_path")
+            local val="${result%%	*}"
+            local src="${result#*	}"
+            echo "$val (source: $src)"
+            ;;
+        NYIA_AUTH_PROFILE)
+            # GLOBAL-only (no project_path) — a committed project conf must not redirect creds.
+            local result
+            result=$(_resolve_whatsup_config "NYIA_AUTH_PROFILE" "$NYIA_DEFAULT_AUTH_PROFILE" "")
+            local val="${result%%	*}"
+            local src="${result#*	}"
+            echo "$val (source: $src)"
+            ;;
         *)
             echo "Error: Unknown key '$key'" >&2
+            return 1
+            ;;
+    esac
+}
+
+# resolve_config_value_raw <key> <assistant> <project_path>
+# Returns ONLY the effective value (no "(source: ...)" suffix; empty string when
+# unset). Unlike read_effective_config_value (which formats for `nyia config view`),
+# this is for code that needs the bare value (launch decisions, etc.). Currently
+# supports the scope-resolved keys used by the launch path (Plan 278/280).
+resolve_config_value_raw() {
+    local key="$1"
+    local assistant_name="${2:-}"
+    local project_path="${3:-}"
+    local mapped
+    mapped=$(_map_config_key_name "$key")
+    case "$mapped" in
+        NYIA_GIT_HISTORY_CUTOFF)
+            local r
+            r=$(_resolve_whatsup_config "NYIA_GIT_HISTORY_CUTOFF" "$NYIA_DEFAULT_GIT_HISTORY_CUTOFF" "$project_path")
+            echo "${r%%	*}"
+            ;;
+        NYIA_NETWORK_EGRESS_POLICY)
+            local r
+            r=$(_resolve_whatsup_config "NYIA_NETWORK_EGRESS_POLICY" "$NYIA_DEFAULT_NETWORK_EGRESS_POLICY" "$project_path")
+            echo "${r%%	*}"
+            ;;
+        NYIA_AUTH_PROFILE)
+            # GLOBAL-only: ignore any project_path so a committed conf can't redirect creds.
+            local r
+            r=$(_resolve_whatsup_config "NYIA_AUTH_PROFILE" "$NYIA_DEFAULT_AUTH_PROFILE" "")
+            echo "${r%%	*}"
+            ;;
+        *)
+            echo "Error: resolve_config_value_raw: unsupported key '$key'" >&2
             return 1
             ;;
     esac
@@ -668,6 +877,49 @@ _resolve_team_dir_config() {
     fi
 
     printf '%s\t%s\n' "$dir" "$source_label"
+}
+
+# Resolver for NYIA_MARKETPLACE_URL.
+# UNLIKE NYIA_TEAM_DIR (global-only), the marketplace URL is settable at BOTH
+# project and global precedence so a repo can pin its own team marketplace.
+# Precedence: project .nyiakeeper/nyia.conf (safe parsed, untrusted) > global > default(empty).
+# Arguments:
+#   $1 - project path (optional — needed to read project config)
+_resolve_marketplace_url_config() {
+    local project_path="${1:-}"
+    local url=""
+    local source_label=""
+    local config_home="${NYIA_CONFIG_HOME:-${HOME}/.config/nyiakeeper/config}"
+
+    # Level 1: Project global config (untrusted — safe parsed)
+    if [[ -z "$url" && -n "$project_path" ]]; then
+        local f="$project_path/.nyiakeeper/nyia.conf"
+        if [[ -f "$f" ]]; then
+            local val
+            val=$(parse_config_file "$f" "NYIA_MARKETPLACE_URL") && {
+                [[ -n "$val" ]] && url="$val" && source_label="project-global"
+            }
+        fi
+    fi
+
+    # Level 2: Global config (user-controlled — source OK)
+    if [[ -z "$url" ]]; then
+        local f="$config_home/nyia.conf"
+        if [[ -f "$f" ]]; then
+            local val
+            val=$(_source_config_key "$f" "NYIA_MARKETPLACE_URL") && {
+                [[ -n "$val" ]] && url="$val" && source_label="global"
+            }
+        fi
+    fi
+
+    # Level 3: Default (empty)
+    if [[ -z "$url" ]]; then
+        url="$NYIA_DEFAULT_MARKETPLACE_URL"
+        source_label="default"
+    fi
+
+    printf '%s\t%s\n' "$url" "$source_label"
 }
 
 # Unified resolver for NYIA_WORKSPACE_SYNC

@@ -17,7 +17,7 @@ _nyia() {
     _init_completion || return
 
     # Top-level subcommands
-    local commands="config exclusions update list status clean completions rollback logo help"
+    local commands="config exclusions marketplace profile git-history update list status clean completions rollback logo help"
 
     # Global flags
     local global_flags="--help --verbose --version --path"
@@ -57,6 +57,23 @@ _nyia() {
                 esac
             fi
             ;;
+        profile)
+            if [[ "$cword" -eq 2 ]]; then
+                COMPREPLY=($(compgen -W "list create help" -- "$cur"))
+            elif [[ "$cword" -ge 3 && "${words[2]}" == "create" ]]; then
+                case "$prev" in
+                    --from) COMPREPLY=($(compgen -W "tech non-tech empty" -- "$cur")) ;;
+                    *)      COMPREPLY=($(compgen -W "--persona --from" -- "$cur")) ;;
+                esac
+            fi
+            ;;
+        git-history)
+            if [[ "$cword" -eq 2 ]]; then
+                COMPREPLY=($(compgen -W "status reconcile rebuild help" -- "$cur"))
+            elif [[ "$cword" -ge 3 && "${words[2]}" == "reconcile" ]]; then
+                COMPREPLY=($(compgen -W "--apply --discard" -- "$cur"))
+            fi
+            ;;
         update)
             if [[ "$cword" -eq 2 ]]; then
                 COMPREPLY=($(compgen -W "status list check install rollback help" -- "$cur"))
@@ -81,6 +98,7 @@ _nyia_assistant() {
         --login --force
         --shell
         --image
+        --profile
         --flavor
         --agent
         --command-mode
@@ -95,7 +113,7 @@ _nyia_assistant() {
         --skip-checks
         --rag --rag-verbose
         --workspace-init
-        --build-custom-image --no-cache
+        --build-custom-image --egress --no-cache
         --setup --set-api-key
     "
 
@@ -105,7 +123,7 @@ _nyia_assistant() {
             COMPREPLY=($(compgen -W "safe full" -- "$cur"))
             return
             ;;
-        --image|--flavor|--agent|--path|--base-branch|--work-branch|-w)
+        --image|--profile|--flavor|--agent|--path|--base-branch|--work-branch|-w)
             # These take a value — no static completions, let shell default
             return
             ;;

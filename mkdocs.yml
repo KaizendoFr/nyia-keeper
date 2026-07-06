@@ -1,0 +1,90 @@
+site_name: Nyia Keeper
+site_description: Multi-Assistant AI on a leash — run Claude, Gemini, Codex, OpenCode & Vibe in safe, dockerized dev environments.
+site_url: https://kaizendofr.github.io/nyia-keeper/
+# Published from the PUBLIC repo (where end users go + where docs/ sync to). The header
+# repo link points at the public project; no edit_uri (the public docs/ is a synced mirror
+# — edits happen in the source repo, not here).
+repo_url: https://github.com/KaizendoFr/nyia-keeper
+repo_name: KaizendoFr/nyia-keeper
+docs_dir: docs
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.instant
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Quick Start: QUICKSTART.md
+      - Installation: INSTALLATION.md
+      - Choosing an Assistant: CHOOSING_AN_ASSISTANT.md
+  - Features:
+      - Branch Management: BRANCH_MANAGEMENT.md
+      - Profiles (accounts & personas): PROFILES.md
+      - Workspace Mode: WORKSPACE.md
+      - Team Sharing: TEAM_SHARING.md
+      - Marketplace: MARKETPLACE.md
+      - Mount Exclusions: MOUNT_EXCLUSIONS.md
+      - Flavors & Overlays: USER_GUIDE_FLAVORS_OVERLAYS.md
+      - Git History Cutoff: GIT_HISTORY_CUTOFF.md
+      - Network Egress:
+          - Overview: NETWORK_EGRESS.md
+          - Test Sidecar Access: SIDECAR_ACCESS.md
+  - Setup:
+      - macOS: MACOS_SETUP.md
+      - Windows (WSL2): WSL2_SETUP.md
+  - Reference:
+      - CLI Reference: CLI_REFERENCE.md
+      - Configuration: CONFIGURATION.md
+      - Assistant Agent Matrix: assistant-agents-matrix.md
+  - Troubleshooting: TROUBLESHOOTING.md
+
+# Maintainer/internal docs (and the build's requirements.txt) excluded from the
+# end-user site ENTIRELY — not built, so their internal/out-of-tree links don't fail
+# --strict. (Plan 285, per plan-review.)
+exclude_docs: |
+  DEV_GUIDE_EGRESS.md
+  DEV_GUIDE_FLAVORS_OVERLAYS.md
+  RELEASE_OPS.md
+  opencode-technical-specs.md
+  opencode-configuration-files.md
+  IMAGE_NAMING.md
+  flavor-system.md
+  requirements.txt

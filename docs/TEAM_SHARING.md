@@ -221,3 +221,34 @@ mkdir -p /path/to/team-shared/skills
 2. Check that skills have a `SKILL.md` file in their subdirectory
 3. Check that agent files use the correct format for your assistant
 4. Check precedence: a project-local resource with the same name takes priority
+
+## Testing team sharing (helper script)
+
+A self-contained smoke test verifies the whole feature end-to-end **without touching your
+real config** (it runs in an isolated temporary `NYIAKEEPER_HOME`).
+
+**File:** `scripts/test-team-sharing.sh`
+
+**Run it** (host or inside the Vagrant VM, from the repo root):
+
+```bash
+scripts/test-team-sharing.sh                              # dev edition (./bin)
+NYIA_BIN_DIR=dist/runtime/bin scripts/test-team-sharing.sh   # runtime edition
+NYIA_ASSISTANT=codex scripts/test-team-sharing.sh            # a different assistant (default: claude)
+```
+
+Exit code `0` = all checks passed.
+
+**What it checks:**
+1. `nyia config global team_dir=…` sets the team directory, and `nyia config view` shows it.
+2. `nyia status` surfaces the team directory.
+3. `nyia-<assistant> --list-skills` / `--list-agents` discover the sample team skill/agent.
+4. A project-shared skill of the same name resolves (project-over-team precedence path).
+
+**In the Vagrant VM:** the repo is mounted at `/dockerized-assistants-src`; run
+`/dockerized-assistants-src/scripts/test-team-sharing.sh` (or `cd` there first). Use
+`NYIA_BIN_DIR=/dockerized-assistants-src/dist/runtime/bin` to exercise the shipped (runtime) edition.
+
+> Note: `nyia config get <key>` currently supports only `home`/`config`/`data`, not the
+> registered config keys — use `nyia config view` to inspect key values. (Tracked for the
+> config-dispatcher convergence work.)

@@ -24,6 +24,7 @@ Complete reference for all CLI flags and their interactions.
 | `--login` | Auth | - | - | Authenticate assistant |
 | `--force` | Auth | `--login` | - | Bypass auth checks |
 | `--set-api-key` | Auth | - | - | Set API key (OpenCode) |
+| `--profile <name>` | Auth | - | - | Use a named profile (separate account; auth-only keeps your content) |
 | `--status` | Config | - | - | Show current configuration |
 | `--setup` | Config | - | - | Interactive setup |
 | `--path <dir>` | Config | - | - | Work on different project |
@@ -84,7 +85,7 @@ USER node
 RUN pip install --no-cache-dir your-python-packages
 ```
 
-See [DEV_GUIDE_FLAVORS_OVERLAYS.md](DEV_GUIDE_FLAVORS_OVERLAYS.md) for full overlay documentation.
+See [USER_GUIDE_FLAVORS_OVERLAYS.md](USER_GUIDE_FLAVORS_OVERLAYS.md) for full overlay documentation.
 
 ### Image Selection
 
@@ -152,6 +153,19 @@ Manage assistant authentication.
 | `--login` | Authenticate with the assistant's service |
 | `--force` | Bypass authentication checks (use with `--login`) |
 | `--set-api-key` | Set API key for team plan users (OpenCode) |
+| `--profile <name>` | Use a named profile: a separate account. Auth-only (the default) keeps your global skills/agents/rules; a persona has its own. See [Profiles](PROFILES.md). |
+
+### Profiles (`nyia profile`)
+
+Multiple accounts per assistant, and optional per-profile content. See
+[Profiles](PROFILES.md) for the full guide.
+
+| Command | Description |
+|---------|-------------|
+| `nyia profile list` | List profiles, the active one, and each named profile's mode (auth-only / persona) |
+| `nyia profile create <name>` | Register an auth-only profile (inherits your global content) |
+| `nyia profile create <name> --persona [--from tech\|non-tech\|empty]` | Create an isolated persona with its own content, seeded once |
+| `nyia config global auth_profile=<name>` | Make a profile the default for every command (global scope only) |
 
 ### Configuration
 

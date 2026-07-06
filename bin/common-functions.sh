@@ -55,6 +55,14 @@ _auto_update_lib="${BASH_SOURCE[0]%/*}/../lib/nyiakeeper/auto-update.sh"
 
 # Platform-aware Docker user mapping
 get_docker_user_args() {
+    # Under restrict-local the egress-hardened variant must START as root to apply
+    # nftables, then setpriv-drop to the mapped user itself (Plan 280b). So we do NOT
+    # pass --user here; the target uid:gid is handed to the entrypoint via env
+    # (NYIA_TARGET_UID/NYIA_TARGET_GID) in the launch path instead.
+    if [[ "${NYIA_EFFECTIVE_EGRESS_POLICY:-off}" == "restrict-local" ]] && ! uses_docker_desktop; then
+        echo ""
+        return
+    fi
     if uses_docker_desktop; then
         # Docker Desktop (macOS + WSL2) handles file permissions differently
         echo ""
@@ -64,8 +72,98 @@ get_docker_user_args() {
     fi
 }
 
+# get_egress_security_args — extra docker args required ONLY under restrict-local
+# (Plan 280b): NET_ADMIN to apply nft (dropped before the session by the entrypoint)
+# and disabling IPv6 in the container netns (the firewall is v4; fail-closed if v6
+# can't be disabled is enforced in the entrypoint). Empty on the off path.
+get_egress_security_args() {
+    if [[ "${NYIA_EFFECTIVE_EGRESS_POLICY:-off}" == "restrict-local" ]]; then
+        echo "--cap-add=NET_ADMIN --sysctl net.ipv6.conf.all.disable_ipv6=1"
+    fi
+}
+
+# egress_variant_image_name <base_image> — the egress-hardened variant tag (Plan 280b).
+# Convention: append "-egress" to the tag (e.g. nyiakeeper/claude:latest ->
+# nyiakeeper/claude:latest-egress). Built from docker/egress/Dockerfile.
+egress_variant_image_name() {
+    echo "${1}-egress"
+}
+
+# _resolve_egress_docker_context — print the docker/ build context dir that contains
+# egress/Dockerfile, working in both the dev tree (CWD `docker/`) and an installed
+# layout (`$script_dir/../docker`, where runtime-install puts it). Non-zero if absent.
+_resolve_egress_docker_context() {
+    if [[ -f "docker/egress/Dockerfile" ]]; then echo "docker"; return 0; fi
+    if [[ -n "${script_dir:-}" && -f "$script_dir/../docker/egress/Dockerfile" ]]; then
+        echo "$script_dir/../docker"; return 0
+    fi
+    return 1
+}
+
+# Identity of a genuine egress-hardened image (Plan 283). The launch path checks THESE,
+# never the spoofable "-egress" tag string, before granting NET_ADMIN.
+readonly NYIA_EGRESS_INIT_PATH="/usr/local/bin/egress-firewall-init.sh"
+readonly NYIA_EGRESS_MIN_FW_VERSION=1   # refuse a variant whose firewall predates fixes
+
+# is_egress_hardened_image <image> — true iff <image> carries the org.nyia.egress label,
+# its entrypoint is the egress init, and its firewall-version >= the minimum. Returns
+# non-zero (NOT hardened / cannot verify) otherwise — callers FAIL CLOSED on non-zero.
+is_egress_hardened_image() {
+    local image="$1"
+    command -v docker >/dev/null 2>&1 || return 1
+
+    local label entrypoint ep0 eplen fwver
+    label=$(docker image inspect --format '{{ index .Config.Labels "org.nyia.egress" }}' "$image" 2>/dev/null) || return 1
+    [[ "$label" == "1" ]] || return 1
+
+    # EXACT entrypoint match, not a substring (M1): a hostile image could embed the path
+    # inside a sh -c wrapper and pass a substring check. Require a single-element vector
+    # equal to the canonical init path.
+    ep0=$(docker image inspect --format '{{ index .Config.Entrypoint 0 }}' "$image" 2>/dev/null) || return 1
+    eplen=$(docker image inspect --format '{{ len .Config.Entrypoint }}' "$image" 2>/dev/null) || return 1
+    [[ "$eplen" == "1" && "$ep0" == "$NYIA_EGRESS_INIT_PATH" ]] || return 1
+
+    fwver=$(docker image inspect --format '{{ index .Config.Labels "org.nyia.egress-firewall-version" }}' "$image" 2>/dev/null) || return 1
+    [[ "$fwver" =~ ^[0-9]+$ && "$fwver" -ge "$NYIA_EGRESS_MIN_FW_VERSION" ]] || return 1
+    return 0
+}
+
+# _is_trusted_egress_source <image> — true iff the image is safe to grant NET_ADMIN to
+# (M2). A remote image (registry host with a dot or :port before the first '/') must be
+# the known nyiakeeper namespace; a LOCAL image (no registry host — e.g. nyiakeeper/...
+# the user built themselves) is trusted. Blocks `--image evil.io/x` from escalating to
+# NET_ADMIN via the -egress path.
+readonly NYIA_TRUSTED_EGRESS_REGISTRY="ghcr.io/kaizendofr/"
+_is_trusted_egress_source() {
+    local image="$1"
+    local first="${image%%/*}"
+    # No registry host (first segment has no '.' and no ':') => local image => trusted.
+    if [[ "$image" != */* ]] || [[ "$first" != *.* && "$first" != *:* ]]; then
+        return 0
+    fi
+    [[ "$image" == "$NYIA_TRUSTED_EGRESS_REGISTRY"* ]]
+}
+
 # Platform-aware Docker network configuration
+# Dedicated bridge network for the egress-restricted topology (Plan 280). Created on
+# demand; the Phase-B firewall + the Phase-C sidecar attach to this same network.
+readonly NYIA_EGRESS_BRIDGE_NAME="nyia-egress"
+
 get_docker_network_args() {
+    # restrict-local (Plan 280a): leave host networking for the container's OWN netns
+    # — the prerequisite for the in-container egress firewall (Phase B). On native
+    # Linux that means a dedicated bridge + host-gateway so host services (ollama)
+    # stay reachable. On Docker Desktop the default is already a bridge.
+    if [[ "${NYIA_EFFECTIVE_EGRESS_POLICY:-off}" == "restrict-local" ]]; then
+        if uses_docker_desktop; then
+            # Already a separate netns; host-gateway keeps host services reachable.
+            echo "--add-host=host.docker.internal:host-gateway"
+        else
+            echo "--network $NYIA_EGRESS_BRIDGE_NAME --add-host=host.docker.internal:host-gateway"
+        fi
+        return
+    fi
+
     if uses_docker_desktop; then
         # Docker Desktop (macOS + WSL2) doesn't support --network host
         # Use default bridge network
@@ -74,6 +172,66 @@ get_docker_network_args() {
         # On native Linux, use host networking for direct access
         echo "--network host"
     fi
+}
+
+# ensure_egress_bridge_network — create the dedicated bridge if missing (Plan 280a).
+# Returns non-zero if the network cannot be ensured (caller fails closed).
+ensure_egress_bridge_network() {
+    command -v docker >/dev/null 2>&1 || return 1
+    docker network inspect "$NYIA_EGRESS_BRIDGE_NAME" >/dev/null 2>&1 && return 0
+    docker network create --driver bridge "$NYIA_EGRESS_BRIDGE_NAME" >/dev/null 2>&1
+}
+
+# setup_egress_for_launch <assistant_cli> <project_path>
+# Resolve + export the effective egress policy and, under restrict-local on native
+# Linux, ensure the dedicated bridge exists. FAIL-CLOSED: returns non-zero if the
+# bridge cannot be created so the caller refuses to launch (Plan 280a). Must be
+# called (not in a subshell) before get_docker_network_args so the export persists.
+setup_egress_for_launch() {
+    local assistant_cli="$1"
+    local project_path="$2"
+
+    if ! declare -f resolve_and_export_egress_policy >/dev/null 2>&1; then
+        local _pol_dev="$script_dir/../lib/command-policy.sh"
+        local _pol_inst="$HOME/.local/lib/nyiakeeper/command-policy.sh"
+        [[ -f "$_pol_dev" ]] && source "$_pol_dev"
+        [[ ! -f "$_pol_dev" && -f "$_pol_inst" ]] && source "$_pol_inst"
+    fi
+    if ! declare -f resolve_and_export_egress_policy >/dev/null 2>&1; then
+        export NYIA_EFFECTIVE_EGRESS_POLICY="off"   # can't resolve -> today's behavior
+        return 0
+    fi
+
+    resolve_and_export_egress_policy "$assistant_cli" "$project_path"
+    [[ "${NYIA_EFFECTIVE_EGRESS_POLICY:-off}" != "restrict-local" ]] && return 0
+
+    print_verbose "network egress policy: restrict-local (assistant: $assistant_cli)"
+
+    # v1 enforcement is native-Linux only. On Docker Desktop / WSL2 the host uid:gid
+    # mapping differs and the firewall variant is unverified — refuse with a clear
+    # message rather than start and FATAL deep in the entrypoint. (Plan 280 v1 scope.)
+    if uses_docker_desktop; then
+        print_error "network_egress_policy=restrict-local currently works on native Linux only."
+        print_error "Docker Desktop / WSL2 support is a planned follow-up (the firewall must run"
+        print_error "inside the Docker VM and is not yet validated there) — not a permanent limit."
+        print_error "For now, set 'nyia config project network_egress_policy=off' to launch here."
+        return 1
+    fi
+
+    if ! ensure_egress_bridge_network; then
+        print_error "network egress: could not create the '$NYIA_EGRESS_BRIDGE_NAME' bridge."
+        print_error "Refusing to launch under restrict-local (FAIL-CLOSED)."
+        return 1
+    fi
+    # The variant entrypoint starts as root, applies nft, then setpriv-drops to this
+    # uid:gid (we dropped --user above). docker_env_args is the caller's local array
+    # (dynamic scope).
+    docker_env_args+=(-e NYIA_TARGET_UID="$(id -u)")
+    docker_env_args+=(-e NYIA_TARGET_GID="$(id -g)")
+    # Tell the container entrypoint a firewall is expected (drives fail-closed there).
+    docker_env_args+=(-e NYIA_EGRESS_POLICY="restrict-local")
+    [[ "${ENABLE_RAG:-}" == "true" ]] && docker_env_args+=(-e NYIA_EGRESS_RAG="true")
+    return 0
 }
 
 # Docker availability and setup validation
@@ -351,6 +509,8 @@ ensure_nyia_gitignore() {
         ".nyiakeeper/.excluded-files.cache"
         ".nyiakeeper/dev-tools/"
         ".nyiakeeper/creds/"
+        # Derived shallow .git for the history-cutoff feature (Plan 278) — local, machine-specific
+        ".nyiakeeper/git-shallow/"
         # Assistant runtime dirs (credentials, session state, ephemeral config)
         ".claude/"
         ".codex/"
@@ -843,6 +1003,264 @@ get_nyiakeeper_home() {
     return 0
 }
 
+# === AUTHENTICATION PROFILES (Plan 286) ===
+# A "profile" namespaces per-assistant authentication so a user can hold multiple
+# accounts (e.g. two Claude logins). The DEFAULT profile is byte-for-byte today's
+# behavior (no new dirs, no migration). Only auth is profiled; nyia config keys stay
+# global.
+
+# validate_profile_name <name> — strict, anchored, traversal-proof. The name becomes a
+# filesystem path AND a docker -v mount arg, so reject anything unsafe. Returns non-zero
+# (caller fails closed) on any invalid name.
+validate_profile_name() {
+    local name="$1"
+    [[ -n "$name" ]] || return 1
+    [[ "$name" == "." || "$name" == ".." ]] && return 1
+    [[ "$name" == *".."* ]] && return 1          # defense in depth vs traversal
+    # Must start AND end alphanumeric; interior may add . _ - ; length-capped. This also
+    # rejects '/', ':', spaces, newlines, leading dots — all path/mount hazards.
+    [[ "$name" =~ ^[A-Za-z0-9]([A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$ ]] || return 1
+    return 0
+}
+
+# resolve_active_profile — the active profile name: --profile flag > GLOBAL auth_profile
+# config > "default". Config is read GLOBAL-only (empty project path) so a committed
+# project/shared nyia.conf can NOT redirect another user's credentials. (Plan 286)
+resolve_active_profile() {
+    if [[ -n "${NYIA_AUTH_PROFILE_CLI:-}" ]]; then
+        echo "$NYIA_AUTH_PROFILE_CLI"; return 0
+    fi
+    # resolve_config_value_raw lives in command-policy.sh, which is sourced on-demand
+    # elsewhere. Lazily source it here (same probe pattern as the git-history mount) so
+    # a globally-configured auth_profile is NOT silently ignored at login/launch time.
+    if ! declare -f resolve_config_value_raw >/dev/null 2>&1; then
+        local _pol_dev="$script_dir/../lib/command-policy.sh"
+        local _pol_inst="$HOME/.local/lib/nyiakeeper/command-policy.sh"
+        [[ -f "$_pol_dev" ]] && source "$_pol_dev"
+        [[ ! -f "$_pol_dev" && -f "$_pol_inst" ]] && source "$_pol_inst"
+    fi
+    if declare -f resolve_config_value_raw >/dev/null 2>&1; then
+        local p
+        p="$(resolve_config_value_raw "NYIA_AUTH_PROFILE" "" "")"   # global-only (no project path)
+        [[ -n "$p" ]] && { echo "$p"; return 0; }
+    fi
+    echo "default"
+}
+
+# resolve_assistant_auth_dir <nyia_home> <assistant> <profile>
+# DEFAULT/empty profile => the LEGACY path "$home/$assistant" IMMEDIATELY (no validation,
+# never "profiles/default") — guarantees BC. Named profile => validated, isolated path.
+# FAIL-CLOSED: a bad profile name returns non-zero (caller must abort, never fall back).
+resolve_assistant_auth_dir() {
+    local home="$1" assistant="$2" profile="${3:-}"
+    if [[ -z "$profile" || "$profile" == "default" ]]; then
+        echo "$home/$assistant"
+        return 0
+    fi
+    if ! validate_profile_name "$profile"; then
+        print_error "Invalid auth profile name: '$profile'" >&2
+        print_error "Use letters, digits, . _ - (no '..', '/', ':' or spaces)." >&2
+        return 1
+    fi
+    echo "$home/profiles/$profile/$assistant"
+    return 0
+}
+
+# resolve_assistant_config_file <nyia_home> <assistant> <profile>
+# The per-assistant credential file (API key + AUTH_METHOD). Profiled too, so file-based
+# API keys isolate per profile (default profile keeps the legacy global config path).
+# (Plan 286 — shell-env keys remain global by nature; documented.)
+resolve_assistant_config_file() {
+    local home="$1" assistant="$2" profile="${3:-}"
+    if [[ -z "$profile" || "$profile" == "default" ]]; then
+        echo "$home/config/${assistant}.conf"
+        return 0
+    fi
+    validate_profile_name "$profile" || { print_error "Invalid auth profile name: '$profile'" >&2; return 1; }
+    echo "$home/profiles/$profile/config/${assistant}.conf"
+    return 0
+}
+
+# resolve_profile_content_dir <nyia_home> <kind> <profile>
+# PURE path helper: the content dir of <kind> (skills|agents|prompts) FOR A GIVEN
+# profile. It does NOT decide mode — the caller does. Under the Plan 288 mode model it
+# is consulted with the ACTIVE profile only in PERSONA mode (isolated content); in
+# auth-only/default mode the source is the GLOBAL dir (see _profile_content_source_dir).
+# DEFAULT/empty profile => legacy "$home/<kind>" IMMEDIATELY (BC guarantee).
+# FAIL-CLOSED: bad profile name or unknown kind returns non-zero (caller must abort).
+resolve_profile_content_dir() {
+    local home="$1" kind="$2" profile="${3:-}"
+    case "$kind" in
+        skills|agents|prompts) ;;
+        *)
+            print_error "Unknown profile content kind: '$kind'" >&2
+            return 1
+            ;;
+    esac
+    if [[ -z "$profile" || "$profile" == "default" ]]; then
+        echo "$home/$kind"
+        return 0
+    fi
+    if ! validate_profile_name "$profile"; then
+        print_error "Invalid auth profile name: '$profile'" >&2
+        return 1
+    fi
+    echo "$home/profiles/$profile/$kind"
+    return 0
+}
+
+# resolve_profile_template_dir <template>
+# Path to a shipped persona content TEMPLATE (Plan 288b). Templates live at
+# docker/shared/profile-templates/<template>/ and are packaged into dev, dist/runtime,
+# AND the installed layout by ONE path: $script_dir/../docker/... (setup.sh puts the
+# libs at ~/.local/bin and docker at ~/.local/docker, so this resolves everywhere —
+# same single-path approach compose_project_prompt uses for system-prompts).
+# FAIL-CLOSED: unknown template name or a missing dir returns non-zero.
+resolve_profile_template_dir() {
+    local template="${1:-}"
+    case "$template" in
+        non-tech) ;;   # allowlist — extend here as templates are added
+        *)
+            print_error "Unknown profile template: '$template'" >&2
+            return 1
+            ;;
+    esac
+    local sdir dir
+    sdir="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
+    dir="$sdir/../docker/shared/profile-templates/$template"
+    # Dev CWD fallback (mirrors _resolve_egress_docker_context), for running from a
+    # source checkout where BASH_SOURCE realpath may differ.
+    if [[ ! -d "$dir" && -d "docker/shared/profile-templates/$template" ]]; then
+        dir="docker/shared/profile-templates/$template"
+    fi
+    if [[ ! -d "$dir" ]]; then
+        print_error "Profile template '$template' not installed (looked in $dir)" >&2
+        return 1
+    fi
+    echo "$dir"
+    return 0
+}
+
+# resolve_profile_mode <nyia_home> <profile>
+# The CONTENT mode of a profile (Plan 288): "auth" (auth-only — inherit the global/
+# default user content LIVE) or "persona" (isolated — use the profile's OWN content).
+# default/empty profile => "auth" (BC: the default profile is the global content).
+# Named profile => read profiles/<name>/profile.conf for NYIA_PROFILE_MODE; missing
+# file/key, empty, or any unknown value => "auth" (marker-absence means auth-only, so
+# a profile created implicitly by `--profile X --login` is auth-only for free).
+# SECURITY: the marker is PARSED with grep/sed, NEVER sourced — a persona dir may be
+# seeded/shared/imported, so sourcing profile.conf would be launch-time code execution.
+# FAIL-CLOSED: an invalid profile name returns non-zero (no mode, no path).
+resolve_profile_mode() {
+    local home="$1" profile="${2:-}"
+    if [[ -z "$profile" || "$profile" == "default" ]]; then
+        echo "auth"
+        return 0
+    fi
+    if ! validate_profile_name "$profile"; then
+        print_error "Invalid auth profile name: '$profile'" >&2
+        return 1
+    fi
+    local conf="$home/profiles/$profile/profile.conf"
+    local mode=""
+    if [[ -f "$conf" ]]; then
+        # Same safe key-read shape as resolve_team_dir — parse, do not source.
+        mode=$(grep -E '^NYIA_PROFILE_MODE=' "$conf" 2>/dev/null | head -1 \
+            | sed 's/^NYIA_PROFILE_MODE=//' | sed 's/^["'\'']//' | sed 's/["'\'']$//')
+    fi
+    if [[ "$mode" == "persona" ]]; then
+        echo "persona"
+    else
+        echo "auth"
+    fi
+    return 0
+}
+
+# print_active_profile_banner <nyia_home> <profile>
+# One-line "which account am I on" notice at launch/login (Plan 289). SILENT for the
+# default/empty profile (BC — no output change for the common case); for a NAMED profile
+# prints the profile + its mode to STDERR (a notice, keeps stdout clean).
+# NON-FATAL: returns 0 on EVERY path (set -e is active in the launch functions), and the
+# mode lookup is guarded so a failure just drops the mode tag — a banner must never abort
+# a launch. Called ONLY from run_assistant and login_assistant (both after the auth-dir
+# validation guard); do NOT add a third call site.
+print_active_profile_banner() {
+    local home="$1" profile="${2:-}"
+    [[ -z "$profile" || "$profile" == "default" ]] && return 0
+    local mode tag=""
+    mode="$(resolve_profile_mode "$home" "$profile" 2>/dev/null || true)"
+    # Map the internal mode to the user-facing label used by `nyia profile list`.
+    case "$mode" in
+        auth)    tag=" (auth-only)" ;;
+        persona) tag=" (persona)" ;;
+        *)       tag="" ;;   # resolution failed -> name only (non-fatal)
+    esac
+    # Cyan, single glyph, to stderr (never inside a $(...) capture).
+    printf '\033[0;36m▶ Profile: %s%s\033[0m\n' "$profile" "$tag" >&2
+    return 0
+}
+
+# _propagation_auth_dir <nyiakeeper_home> <assistant_cli>
+# The per-assistant auth dir that actually gets MOUNTED for the active profile
+# (Plan 286). User/team skills + agents must be propagated INTO this dir, else a
+# named-profile session sees none of them (the default dir is not mounted). The
+# source content stays global — only the TARGET follows the profile. Falls back to
+# the legacy path if the resolver is unavailable (source-order safety). The active
+# profile is already validated upstream before propagation runs, so this resolves.
+_propagation_auth_dir() {
+    local home="$1" assistant="$2"
+    if declare -f resolve_assistant_auth_dir >/dev/null 2>&1 \
+       && declare -f resolve_active_profile >/dev/null 2>&1; then
+        local d
+        if d="$(resolve_assistant_auth_dir "$home" "$assistant" "$(resolve_active_profile)")"; then
+            echo "$d"
+            return 0
+        fi
+    fi
+    echo "$home/$assistant"
+}
+
+# _profile_content_source_dir <nyiakeeper_home> <kind>
+# SOURCE dir for user content (skills|agents|prompts) under the active profile.
+# Plan 288 MODE model (supersedes 287's isolated-only):
+#   - default/empty profile => global $home/<kind> (BC, unchanged).
+#   - named + mode=auth (the DEFAULT for named profiles, incl. `--profile X --login`)
+#     => the GLOBAL $home/<kind> — content is INHERITED LIVE from the default profile.
+#   - named + mode=persona (opt-in, set by `profile create --persona`, Plan 288b)
+#     => the profile's OWN profiles/<name>/<kind> (287 isolated behavior).
+# ANTI-LEAK: a rejected/failed mode or content resolution (e.g. a bad name) returns
+# EMPTY (non-zero), NEVER global — so "invalid name" can't masquerade as auth→global
+# and leak content into a mis-named profile (preserves 287's post-review hardening).
+# Only mode=persona ever consults the profiles/ path; the resolver-not-loaded legacy
+# fallback remains for source-order safety.
+_profile_content_source_dir() {
+    local home="$1" kind="$2"
+    if declare -f resolve_active_profile >/dev/null 2>&1 \
+       && declare -f resolve_profile_mode >/dev/null 2>&1 \
+       && declare -f resolve_profile_content_dir >/dev/null 2>&1; then
+        local profile mode
+        profile="$(resolve_active_profile)"
+        if ! mode="$(resolve_profile_mode "$home" "$profile")"; then
+            return 1   # bad name -> EMPTY, never global (anti-leak)
+        fi
+        if [[ "$mode" == "persona" ]]; then
+            local d
+            if d="$(resolve_profile_content_dir "$home" "$kind" "$profile")"; then
+                echo "$d"
+                return 0
+            fi
+            return 1   # rejected profile in persona mode -> EMPTY (anti-leak)
+        fi
+        # mode=auth (or default): inherit the global content live.
+        # resolve_profile_content_dir validates <kind> and returns $home/<kind>
+        # for the auth/default case, so reuse it rather than hand-building the path.
+        resolve_profile_content_dir "$home" "$kind" "default"
+        return $?
+    fi
+    # Legacy fallback is only for source-order safety (resolvers not loaded yet).
+    echo "$home/$kind"
+}
+
 # === CONFIG BACKUP ===
 
 # Backup assistant config files before container launch.
@@ -895,8 +1313,10 @@ propagate_user_skills() {
     local assistant_cli="$1"
     local nyiakeeper_home="$2"
 
-    local source_dir="$nyiakeeper_home/skills"
-    local target_dir="$nyiakeeper_home/$assistant_cli/skills"
+    # Source per the active profile's MODE (Plan 288): global for auth-only, the
+    # profile's own dir for a persona. Target is always the profile's mounted auth dir.
+    local source_dir="$(_profile_content_source_dir "$nyiakeeper_home" "skills")"
+    local target_dir="$(_propagation_auth_dir "$nyiakeeper_home" "$assistant_cli")/skills"
 
     # Silent no-op if user hasn't created a skills directory
     if [[ ! -d "$source_dir" ]]; then
@@ -950,8 +1370,10 @@ propagate_user_agents() {
         codex|gemini) return 0 ;;
     esac
 
-    local source_dir="$nyiakeeper_home/agents"
-    local target_dir="$nyiakeeper_home/$assistant_cli/agents"
+    # Source per the active profile's MODE (Plan 288): global for auth-only, the
+    # profile's own dir for a persona. Target is always the profile's mounted auth dir.
+    local source_dir="$(_profile_content_source_dir "$nyiakeeper_home" "agents")"
+    local target_dir="$(_propagation_auth_dir "$nyiakeeper_home" "$assistant_cli")/agents"
 
     # Silent no-op if user hasn't created an agents directory
     if [[ ! -d "$source_dir" ]]; then
@@ -1141,7 +1563,7 @@ propagate_team_skills() {
     local nyiakeeper_home="$3"
 
     local source_dir="$team_dir/skills"
-    local target_dir="$nyiakeeper_home/$assistant_cli/skills"
+    local target_dir="$(_propagation_auth_dir "$nyiakeeper_home" "$assistant_cli")/skills"
 
     # Silent no-op if team skills directory doesn't exist
     if [[ ! -d "$source_dir" ]]; then
@@ -1198,7 +1620,7 @@ propagate_team_agents() {
     esac
 
     local source_dir="$team_dir/agents"
-    local target_dir="$nyiakeeper_home/$assistant_cli/agents"
+    local target_dir="$(_propagation_auth_dir "$nyiakeeper_home" "$assistant_cli")/agents"
 
     # Silent no-op if team agents directory doesn't exist
     if [[ ! -d "$source_dir" ]]; then
@@ -1234,6 +1656,79 @@ propagate_team_agents() {
     if [[ $copied -gt 0 ]]; then
         print_verbose "Propagated $copied team agent(s) to $assistant_cli ($skipped already existed)"
     fi
+}
+
+# Sync the Git-backed private/team marketplace (Plan 246a) and propagate its
+# skills + agents into the assistant's global config via the EXISTING team
+# propagators (no new copy logic, no clobber).
+#
+# Precedence (R5): user > NYIA_TEAM_DIR > marketplace > project-shared > built-in.
+# This MUST be called AFTER user + team propagation so local content wins, and
+# BEFORE project-shared propagation.
+#
+# Fail-open (R3): sync_marketplace() never returns non-zero and never blocks.
+# Prints a one-line launch status (R8): synced N / offline-cached / not-configured.
+#
+# Arguments:
+#   $1 - assistant_cli
+#   $2 - nyiakeeper_home (propagation target base)
+#   $3 - project path (optional — enables project-level NYIA_MARKETPLACE_URL)
+propagate_marketplace_content() {
+    local assistant_cli="$1"
+    local nyiakeeper_home="$2"
+    local project_path="${3:-}"
+
+    # Source the marketplace + policy libs on demand (dev source → installed layout),
+    # mirroring the command-policy candidate-probing pattern used elsewhere.
+    if ! declare -f sync_marketplace >/dev/null 2>&1; then
+        local _policy_dev="$script_dir/../lib/command-policy.sh"
+        local _policy_inst="$HOME/.local/lib/nyiakeeper/command-policy.sh"
+        local _mp_dev="$script_dir/../lib/marketplace-sync.sh"
+        local _mp_inst="$HOME/.local/lib/nyiakeeper/marketplace-sync.sh"
+        [[ -f "$_policy_dev" ]] && source "$_policy_dev"
+        [[ ! -f "$_policy_dev" && -f "$_policy_inst" ]] && source "$_policy_inst"
+        if [[ -f "$_mp_dev" ]]; then
+            source "$_mp_dev"
+        elif [[ -f "$_mp_inst" ]]; then
+            source "$_mp_inst"
+        fi
+    fi
+
+    # If the lib still isn't available, fail open silently — launch must proceed.
+    if ! declare -f sync_marketplace >/dev/null 2>&1; then
+        return 0
+    fi
+
+    # Fail-open sync. Path is returned on stdout AND in NYIA_MARKETPLACE_PATH;
+    # we read the side-effect variables to avoid a subshell that would discard
+    # the status/count updates.
+    sync_marketplace "$project_path" >/dev/null || true
+
+    local mp_path="${NYIA_MARKETPLACE_PATH:-}"
+    local mp_status="${NYIA_MARKETPLACE_STATUS:-not-configured}"
+    local mp_count="${NYIA_MARKETPLACE_ITEM_COUNT:-0}"
+
+    # Reuse the team propagators on the cached marketplace dir (skills + agents).
+    if [[ -n "$mp_path" && -d "$mp_path" ]]; then
+        propagate_team_skills "$assistant_cli" "$mp_path" "$nyiakeeper_home"
+        propagate_team_agents "$assistant_cli" "$mp_path" "$nyiakeeper_home"
+    fi
+
+    # Launch status line (R8).
+    case "$mp_status" in
+        synced)
+            print_info "📦 [MARKETPLACE] Synced ${mp_count} item(s)"
+            ;;
+        offline-cached)
+            print_warning "📦 [MARKETPLACE] Offline — using cached (${mp_count} item(s))"
+            ;;
+        not-configured)
+            # Silent unless verbose: most users have no marketplace configured.
+            print_verbose "[MARKETPLACE] Not configured"
+            ;;
+    esac
+
+    return 0
 }
 
 # === VERSION MANAGEMENT ===
@@ -1692,7 +2187,14 @@ compose_project_prompt() {
     local final_prompt=""
     local script_dir="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
     local nyia_prompts="$script_dir/../docker/shared/system-prompts"
-    local user_prompts="$nyia_home/prompts"
+    # User override source per the active profile's MODE (Plan 288): global for
+    # auth-only, the profile's own dir for a persona. ORDERING CONTRACT:
+    # NYIA_AUTH_PROFILE_CLI is exported by cli-parser.sh at launcher startup, before
+    # any dispatch reaches generate_assistant_prompts/compose — so the active profile
+    # is always resolved here. Only steps 3/5 below (user overrides) route through
+    # this dir; the Nyia protected/base sections (1/2/4/8) and team/project sections
+    # (5b/6/7) are profile-independent by design.
+    local user_prompts="$(_profile_content_source_dir "$nyia_home" "prompts")"
     local shared_prompts="$project_path/.nyiakeeper/shared/prompts"
     local project_prompts="$project_path/.nyiakeeper/prompts"
 
@@ -1823,8 +2325,16 @@ check_git_exclusions() {
     echo "Would you like to exclude $prompt_filename from git tracking?"
     echo "(Uses .git/info/exclude - local only, never committed)"
     echo ""
-    read -p "Exclude $prompt_filename from git? [Y/n]: " response
-    
+    # Interactive: prompt as before. Non-interactive (script/CI/pipe, no TTY): take the
+    # [Y/n] default (exclude) — same as pressing Enter — instead of hanging on an
+    # unanswerable prompt. Interactive behavior is unchanged. (Plan 284)
+    if [[ -t 0 ]]; then
+        read -p "Exclude $prompt_filename from git? [Y/n]: " response
+    else
+        response=""
+        print_info "Non-interactive: using the default (exclude $prompt_filename from git tracking)"
+    fi
+
     # Add this file to exclusions
     if [[ ! "$response" =~ ^[Nn]$ ]]; then
         echo "$prompt_filename" >> "$exclude_file"
@@ -2013,6 +2523,28 @@ build_custom_image() {
     print_info "Building image (this may take a while)..."
     if docker build $no_cache_flag -t "$custom_image_name" -f "$temp_dockerfile" "$build_context"; then
         print_success "Custom image built successfully: $custom_image_name"
+
+        # Egress-hardened OUTERMOST layer (Plan 283): with --egress, wrap the overlay we
+        # just built in the egress variant so restrict-local selects it. Egress MUST be on
+        # top (its root-init runs first). FAIL-CLOSED: a failure here is a hard error.
+        if [[ "${BUILD_EGRESS:-false}" == "true" ]]; then
+            local egress_ctx egress_tag
+            if ! egress_ctx=$(_resolve_egress_docker_context); then
+                print_error "Egress build context not found (docker/egress/Dockerfile). Cannot harden the overlay."
+                rm -f "$temp_dockerfile"; return 1
+            fi
+            egress_tag=$(egress_variant_image_name "$custom_image_name")
+            print_info "Hardening overlay with the egress variant (outermost): $egress_tag"
+            if docker build $no_cache_flag --build-arg BASE_IMAGE="$custom_image_name" \
+                    -t "$egress_tag" -f "$egress_ctx/egress/Dockerfile" "$egress_ctx"; then
+                print_success "Egress-hardened image built: $egress_tag"
+                custom_image_name="$egress_tag"
+            else
+                print_error "Failed to build the egress-hardened layer (FAIL-CLOSED)."
+                rm -f "$temp_dockerfile"; return 1
+            fi
+        fi
+
         print_info ""
         print_info "To use your custom image:"
         # Teach the custom pseudo-flavor shortcut (Plan 266); --image stays as fallback.
@@ -2146,21 +2678,29 @@ create_docker_env_file() {
         done < <(get_creds_env_args "$project_path")
     fi
     
-    # Source config file to get variables like GOOGLE_CLOUD_PROJECT
+    # Source config file to get variables like GOOGLE_CLOUD_PROJECT and the
+    # file-based API key + AUTH_METHOD. This file is profiled (Plan 286): the
+    # DEFAULT profile keeps the legacy "$nyia_home/config/<name>.conf" path, a
+    # named profile isolates it under profiles/<p>/config/. Fails closed on a
+    # bad profile name (never leaks another profile's key).
     local config_file=""
+    local nyia_home=$(get_nyiakeeper_home)
+    local conf_basename
     if [[ -n "$assistant_name" ]]; then
-        # Get proper config directory
-        local nyia_home=$(get_nyiakeeper_home)
         # Handle openai-codex case where assistant_cli is "codex" but config file is "openai-codex.conf"
         if [[ "$assistant_name" == "codex" ]]; then
-            config_file="$nyia_home/config/openai-codex.conf"
+            conf_basename="openai-codex"
         else
-            config_file="$nyia_home/config/${assistant_name}.conf"
+            conf_basename="$assistant_name"
         fi
     else
         # Fallback to basename detection (may not work in all contexts)
-        local nyia_home=$(get_nyiakeeper_home)
-        config_file="$nyia_home/config/$(basename "$0" .sh).conf"
+        conf_basename="$(basename "$0" .sh)"
+    fi
+    local active_profile
+    active_profile="$(resolve_active_profile)"
+    if ! config_file="$(resolve_assistant_config_file "$nyia_home" "$conf_basename" "$active_profile")"; then
+        return 1
     fi
     
     if [[ -f "$config_file" ]]; then
@@ -2178,6 +2718,9 @@ fi
 # Export important config variables
 for var_name in GOOGLE_CLOUD_PROJECT ANTHROPIC_API_KEY GEMINI_API_KEY MISTRAL_API_KEY; do
     if [[ -n "${!var_name:-}" ]]; then
+        if [[ "$var_name" == "GOOGLE_CLOUD_PROJECT" && "${!var_name}" == "your-project-name" ]]; then
+            continue
+        fi
         echo "${var_name}=${!var_name}"
     fi
 done
@@ -2305,8 +2848,12 @@ check_credentials() {
             fi
             
             # Method 3: Vertex AI (both required)
-            print_verbose "Checking Vertex AI: GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT:+SET}, GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:+SET}"
-            if [[ -n "${GOOGLE_CLOUD_PROJECT}" && -n "${GOOGLE_APPLICATION_CREDENTIALS}" && -f "${GOOGLE_APPLICATION_CREDENTIALS}" ]]; then
+            local google_cloud_project="${GOOGLE_CLOUD_PROJECT:-}"
+            if [[ "$google_cloud_project" == "your-project-name" ]]; then
+                google_cloud_project=""
+            fi
+            print_verbose "Checking Vertex AI: GOOGLE_CLOUD_PROJECT=${google_cloud_project:+SET}, GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:+SET}"
+            if [[ -n "$google_cloud_project" && -n "${GOOGLE_APPLICATION_CREDENTIALS}" && -f "${GOOGLE_APPLICATION_CREDENTIALS}" ]]; then
                 print_verbose "Found Vertex AI credentials"
                 return 0
             fi
@@ -2385,6 +2932,189 @@ check_credentials() {
     esac
 }
 
+gemini_credentials_present_unverified() {
+    local cfg_dir="$1"
+
+    if [[ -s "$cfg_dir/oauth_creds.json" || -s "$cfg_dir/google_accounts.json" ]]; then
+        return 0
+    fi
+
+    if [[ -n "${GEMINI_API_KEY:-}" ]]; then
+        return 0
+    fi
+
+    local google_cloud_project="${GOOGLE_CLOUD_PROJECT:-}"
+    if [[ "$google_cloud_project" == "your-project-name" ]]; then
+        google_cloud_project=""
+    fi
+    if [[ -n "$google_cloud_project" && -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" && -f "${GOOGLE_APPLICATION_CREDENTIALS}" ]]; then
+        return 0
+    fi
+
+    return 1
+}
+
+print_gemini_unverified_credentials_message() {
+    local cfg_dir="$1"
+
+    if gemini_credentials_present_unverified "$cfg_dir"; then
+        print_info "Gemini credential files found but not verified; starting authentication to refresh them."
+    else
+        print_credential_failure_message "gemini" "login"
+    fi
+}
+
+prepare_gemini_force_login_backup() {
+    local cfg_dir="$1"
+    local -a known_auth_files=("oauth_creds.json" "google_accounts.json")
+    local has_auth_files=false
+    local auth_file
+
+    for auth_file in "${known_auth_files[@]}"; do
+        if [[ -e "$cfg_dir/$auth_file" ]]; then
+            has_auth_files=true
+            break
+        fi
+    done
+
+    if [[ "$has_auth_files" != "true" ]]; then
+        print_verbose "No Gemini auth files to move for force login"
+        return 0
+    fi
+
+    local timestamp="${NYIA_GEMINI_FORCE_BACKUP_TIMESTAMP:-$(date -u +%Y%m%dT%H%M%SZ)}"
+    local backup_dir="$cfg_dir/force-login-backup-$timestamp"
+
+    if [[ -e "$backup_dir" ]]; then
+        print_error "Gemini force-login backup already exists: $backup_dir"
+        print_info "Choose a different backup timestamp or move the existing backup before retrying."
+        return 1
+    fi
+
+    if ! mkdir -m 700 "$backup_dir"; then
+        print_error "Failed to create Gemini force-login backup directory: $backup_dir"
+        return 1
+    fi
+    chmod 700 "$backup_dir" 2>/dev/null || true
+
+    local -a moved_files=()
+    for auth_file in "${known_auth_files[@]}"; do
+        if [[ -e "$cfg_dir/$auth_file" ]]; then
+            if mv "$cfg_dir/$auth_file" "$backup_dir/$auth_file"; then
+                moved_files+=("$auth_file")
+            else
+                print_error "Failed to move Gemini auth file for backup: $auth_file"
+                local moved_file
+                for moved_file in "${moved_files[@]}"; do
+                    mv "$backup_dir/$moved_file" "$cfg_dir/$moved_file" 2>/dev/null || true
+                done
+                rmdir "$backup_dir" 2>/dev/null || true
+                return 1
+            fi
+        fi
+    done
+
+    print_info "Moved stale Gemini auth files to: $backup_dir"
+    print_info "Restore with:"
+    print_info "  mv \"$backup_dir\"/* \"$cfg_dir\"/"
+    return 0
+}
+
+# Plan 274: decide whether a provider's login CLI accepts the generic
+# `--device-code` flag. Historically this flag was appended for any config with
+# AUTH_METHOD=device_code, but no current provider's login command supports it
+# (Claude uses token_setup `claude /quit`; Codex uses chatgpt_signin
+# `--device-auth`). Returns 0 only for providers explicitly listed here.
+provider_supports_device_code_flag() {
+    local provider="$1"
+
+    case "$provider" in
+        # Add a provider here only if its login command accepts `--device-code`.
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# Plan 274: normalize a stale Claude AUTH_METHOD=device_code to the supported
+# token_setup login mode. Older auto-generated claude.conf files (created when
+# the example still defaulted to device_code) would otherwise append an
+# unsupported `--device-code` flag to `claude /quit` and fail before reauth.
+# Echoes the effective auth method; prints a one-time migration hint on stderr.
+normalize_claude_auth_method() {
+    local provider="$1"
+    local auth_method="$2"
+
+    if [[ "$provider" == "claude" && "$auth_method" == "device_code" ]]; then
+        print_warning "⚠️  Claude config uses obsolete AUTH_METHOD=\"device_code\"; using the supported login flow instead." >&2
+        print_info "   Update your claude.conf: set AUTH_METHOD=\"token_setup\" to silence this warning." >&2
+        echo "token_setup"
+        return 0
+    fi
+
+    echo "$auth_method"
+}
+
+# Plan 274: back up live Claude credential files before a forced reauth so a
+# stale `.credentials.json` (e.g. one causing repeated 401s) can no longer be
+# reported as "already authenticated". Mirrors the Gemini force-login contract:
+# a 0700 timestamped backup dir, atomic move of known auth files, rollback on
+# failure, and restore guidance. Never prints credential contents.
+prepare_claude_force_login_backup() {
+    local cfg_dir="$1"
+    local -a known_auth_files=(".credentials.json")
+    local has_auth_files=false
+    local auth_file
+
+    for auth_file in "${known_auth_files[@]}"; do
+        if [[ -e "$cfg_dir/$auth_file" ]]; then
+            has_auth_files=true
+            break
+        fi
+    done
+
+    if [[ "$has_auth_files" != "true" ]]; then
+        print_verbose "No Claude auth files to move for force login"
+        return 0
+    fi
+
+    local timestamp="${NYIA_CLAUDE_FORCE_BACKUP_TIMESTAMP:-$(date -u +%Y%m%dT%H%M%SZ)}"
+    local backup_dir="$cfg_dir/force-login-backup-$timestamp"
+
+    if [[ -e "$backup_dir" ]]; then
+        print_error "Claude force-login backup already exists: $backup_dir"
+        print_info "Choose a different backup timestamp or move the existing backup before retrying."
+        return 1
+    fi
+
+    if ! mkdir -m 700 "$backup_dir"; then
+        print_error "Failed to create Claude force-login backup directory: $backup_dir"
+        return 1
+    fi
+
+    local -a moved_files=()
+    for auth_file in "${known_auth_files[@]}"; do
+        if [[ -e "$cfg_dir/$auth_file" ]]; then
+            if mv "$cfg_dir/$auth_file" "$backup_dir/$auth_file"; then
+                moved_files+=("$auth_file")
+            else
+                print_error "Failed to move Claude auth file for backup: $auth_file"
+                local moved_file
+                for moved_file in "${moved_files[@]}"; do
+                    mv "$backup_dir/$moved_file" "$cfg_dir/$moved_file" 2>/dev/null || true
+                done
+                rmdir "$backup_dir" 2>/dev/null || true
+                return 1
+            fi
+        fi
+    done
+
+    print_info "Moved stale Claude credentials to: $backup_dir"
+    print_info "Restore with:"
+    print_info "  mv \"$backup_dir\"/* \"$cfg_dir\"/"
+    return 0
+}
+
 # Print appropriate message when credentials are missing
 # Arguments:
 #   $1 - assistant_cli (e.g., "claude", "gemini")
@@ -2417,6 +3147,134 @@ generate_container_name() {
     echo "nyiakeeper-${assistant_name}-${project_basename}-$(date +%s)"
 }
 
+# apply_git_history_cutoff_mount <project_path> <container_path> <assistant_cli>
+# When the git_history_cutoff config key is set, build a protected shallow `.git`
+# and append the over-mount to the global VOLUME_ARGS so the container sees only
+# post-cutoff history. FAIL-CLOSED: if the cutoff is set but the shallow cannot be
+# built/verified, return non-zero so the caller refuses to launch (never falls back
+# to the full `.git`). No cutoff configured => no-op, returns 0. (Plan 278a)
+apply_git_history_cutoff_mount() {
+    local project_path="$1"
+    local container_path="$2"
+    local assistant_cli="$3"
+
+    # Source the libs on demand (dev source tree → installed layout), same probing
+    # pattern used for command-policy elsewhere in this file.
+    local _gh_dev="$script_dir/../lib/git-history-cutoff.sh"
+    local _gh_inst="$HOME/.local/lib/nyiakeeper/git-history-cutoff.sh"
+    local _gh_lib=""
+    [[ -f "$_gh_dev" ]] && _gh_lib="$_gh_dev"
+    [[ -z "$_gh_lib" && -f "$_gh_inst" ]] && _gh_lib="$_gh_inst"
+    if [[ -z "$_gh_lib" ]]; then
+        print_verbose "git-history-cutoff lib not found; skipping cutoff mount"
+        return 0
+    fi
+    # shellcheck disable=SC1090
+    source "$_gh_lib"
+
+    # read_effective_config_value lives in command-policy.sh; source it if needed.
+    if ! declare -f resolve_config_value_raw >/dev/null 2>&1; then
+        local _pol_dev="$script_dir/../lib/command-policy.sh"
+        local _pol_inst="$HOME/.local/lib/nyiakeeper/command-policy.sh"
+        [[ -f "$_pol_dev" ]] && source "$_pol_dev"
+        [[ ! -f "$_pol_dev" && -f "$_pol_inst" ]] && source "$_pol_inst"
+    fi
+    if ! declare -f resolve_config_value_raw >/dev/null 2>&1; then
+        print_verbose "command-policy not available; skipping cutoff mount"
+        return 0
+    fi
+
+    # Workspace mode: each member repo has its own cutoff — handle per repo (Plan 278c).
+    if [[ "${WORKSPACE_MODE:-}" == "true" ]] || [[ -f "$project_path/.nyiakeeper/workspace.conf" ]]; then
+        apply_git_history_cutoff_mounts_workspace "$project_path" "$container_path" "$assistant_cli"
+        return $?
+    fi
+
+    local cutoff
+    cutoff=$(resolve_config_value_raw "NYIA_GIT_HISTORY_CUTOFF" "$assistant_cli" "$project_path")
+    [[ -z "$cutoff" ]] && return 0  # feature off — full history (today's behavior)
+
+    local shallow_dir="$project_path/.nyiakeeper/git-shallow"
+    local spec
+    if ! spec=$(prepare_git_history_cutoff_mount "$project_path" "$container_path" "$cutoff" "$shallow_dir"); then
+        print_error "git history cutoff: could not build protected shallow .git for cutoff '$cutoff'."
+        print_error "Refusing to launch (would otherwise expose pre-cutoff history). FAIL-CLOSED."
+        return 1
+    fi
+    if [[ -n "$spec" ]]; then
+        VOLUME_ARGS+=(-v "$spec")
+        # Signal the container that a cutoff is expected. The entrypoint asserts the
+        # mounted .git is actually shallow before running the assistant (defense in
+        # depth — if the over-mount ever silently fails, the container refuses to run
+        # with full history). docker_env_args is the caller's local array (dynamic
+        # scope); both launch paths name it identically.
+        docker_env_args+=(-e NYIA_GIT_HISTORY_CUTOFF_ACTIVE="true")
+        print_verbose "git history cutoff active (cutoff: $cutoff) — protected .git over-mounted"
+    fi
+    return 0
+}
+
+# apply_git_history_cutoff_mounts_workspace <workspace_root> <container_path> <assistant_cli>
+# Per-repo cutoff over-mounts for a workspace (Plan 278c). The ROOT mounts at
+# <container_path>/.git; each git member at <container_path>/repos/<name>-<sha8>/.git
+# (mirroring append_repo_volume_args). FAIL-CLOSED per repo: if any protected repo's
+# shallow can't be built, the launch is refused (that repo cannot be mounted safely).
+# Only the root sets the entrypoint backstop env (it asserts the root's .git only).
+apply_git_history_cutoff_mounts_workspace() {
+    local root="$1"
+    local container_path="$2"
+    local assistant_cli="$3"
+
+    # workspace_git_repos lives in git-history-reconcile.sh; parse_* in workspace.sh.
+    if ! declare -f workspace_git_repos >/dev/null 2>&1; then
+        local _rc_dev="$script_dir/../lib/git-history-reconcile.sh"
+        local _rc_inst="$HOME/.local/lib/nyiakeeper/git-history-reconcile.sh"
+        [[ -f "$_rc_dev" ]] && source "$_rc_dev"
+        [[ ! -f "$_rc_dev" && -f "$_rc_inst" ]] && source "$_rc_inst"
+    fi
+    if ! declare -f workspace_git_repos >/dev/null 2>&1; then
+        print_verbose "workspace git-history lib unavailable; skipping cutoff mounts"
+        return 0
+    fi
+
+    local repo wmode
+    while IFS=$'\t' read -r repo wmode; do
+        [[ -z "$repo" ]] && continue
+
+        local cutoff
+        cutoff=$(resolve_config_value_raw "NYIA_GIT_HISTORY_CUTOFF" "$assistant_cli" "$repo")
+        [[ -z "$cutoff" ]] && continue  # this repo is unprotected — full .git (intended)
+
+        # Container path for this repo: root at base; members under repos/<name>-<sha8>.
+        local repo_container
+        if [[ "$repo" == "$root" ]]; then
+            repo_container="$container_path"
+        else
+            local repo_hash repo_name
+            repo_hash=$(echo -n "$repo" | portable_sha256sum | cut -c1-8)
+            repo_name=$(basename "$repo")
+            repo_container="$container_path/repos/${repo_name}-${repo_hash}"
+        fi
+
+        local shallow_dir="$repo/.nyiakeeper/git-shallow"
+        local spec
+        if ! spec=$(prepare_git_history_cutoff_mount "$repo" "$repo_container" "$cutoff" "$shallow_dir"); then
+            print_error "git history cutoff: could not build protected shallow .git for repo '$repo' (cutoff '$cutoff')."
+            print_error "Refusing to launch the workspace (would expose pre-cutoff history). FAIL-CLOSED."
+            return 1
+        fi
+        if [[ -n "$spec" ]]; then
+            VOLUME_ARGS+=(-v "$spec")
+            # Keep this repo's derived shallow out of its own git tracking (Plan 278c).
+            declare -f ensure_nyia_gitignore >/dev/null 2>&1 && ensure_nyia_gitignore "$repo"
+            print_verbose "git history cutoff active for $repo (cutoff: $cutoff)"
+            # The entrypoint backstop only validates the root .git; set it for root only.
+            [[ "$repo" == "$root" ]] && docker_env_args+=(-e NYIA_GIT_HISTORY_CUTOFF_ACTIVE="true")
+        fi
+    done < <(workspace_git_repos "$root")
+    return 0
+}
+
 # Run debug shell without git-entrypoint
 run_debug_shell() {
     local full_image_name="$1"
@@ -2430,6 +3288,15 @@ run_debug_shell() {
     print_verbose "Starting debug shell container $container_name"
     print_verbose "Image: $full_image_name"
     print_verbose "Bypassing git-entrypoint for direct shell access"
+
+    # The debug shell overrides the entrypoint with bash, so the egress image's root-init
+    # (which would drop privileges) never runs — an egress image here = a ROOT shell on
+    # Docker Desktop. Refuse any egress-hardened image outright. (Plan 283 M4)
+    if is_egress_hardened_image "$full_image_name"; then
+        print_error "Debug shell cannot run an egress-hardened image (it would bypass the firewall + run as root)."
+        cleanup_env_file 2>/dev/null || true
+        return 1
+    fi
 
     # Derive canonical container path for unique project identification (Plan 71)
     local container_path
@@ -2493,6 +3360,13 @@ run_debug_shell() {
         print_verbose "Using direct mount (exclusions not available)"
     fi
 
+    # Layer the protected shallow .git over the project's .git when a history
+    # cutoff is configured (Plan 278a). FAIL-CLOSED: abort launch if it can't build.
+    if ! apply_git_history_cutoff_mount "$project_path" "$container_path" "$assistant_cli"; then
+        cleanup_env_file
+        return 1
+    fi
+
     # Isolate node_modules from host with tmpfs (writable by any user, container-only)
     # tmpfs mode 1777 ensures node user (uid 1000) can write without ownership issues
     if [[ "${FLAVOR:-}" == "node" ]]; then
@@ -2531,6 +3405,26 @@ run_debug_shell() {
         print_verbose "Relaxed seccomp for codex bubblewrap sandbox"
     fi
 
+    # The debug shell uses `--entrypoint bash`, which BYPASSES the firewall init —
+    # so it cannot be hardened. Under restrict-local, refuse it (fail-closed) rather
+    # than run a half-applied policy (NET_ADMIN with no nft). Plan 280b.
+    if ! declare -f resolve_and_export_egress_policy >/dev/null 2>&1; then
+        local _pol_dev="$script_dir/../lib/command-policy.sh"
+        local _pol_inst="$HOME/.local/lib/nyiakeeper/command-policy.sh"
+        [[ -f "$_pol_dev" ]] && source "$_pol_dev"
+        [[ ! -f "$_pol_dev" && -f "$_pol_inst" ]] && source "$_pol_inst"
+    fi
+    if declare -f resolve_and_export_egress_policy >/dev/null 2>&1; then
+        resolve_and_export_egress_policy "$assistant_cli" "$project_path"
+    fi
+    if [[ "${NYIA_EFFECTIVE_EGRESS_POLICY:-off}" == "restrict-local" ]]; then
+        print_error "Debug shell is not available under network_egress_policy=restrict-local"
+        print_error "(it bypasses the egress firewall). Use the normal session, or set the"
+        print_error "policy to 'off' for this project to debug."
+        cleanup_env_file
+        return 1
+    fi
+
     # Direct bash execution, no entrypoint
     docker run -it --rm \
         $(get_docker_network_args) \
@@ -2550,7 +3444,36 @@ run_debug_shell() {
 
     # Cleanup immediately after Docker run
     cleanup_env_file
+    git_history_post_session_notice "$project_path"
     trap - EXIT
+}
+
+# git_history_post_session_notice <project_path>
+# After the assistant exits, if the protected shallow holds un-reconciled commits,
+# print a clear summary + the reconcile command. NEVER modifies the real repo —
+# reconciliation is always an explicit, separate user action. (Plan 278b)
+git_history_post_session_notice() {
+    local project="$1"
+    local rc_dev="$script_dir/../lib/git-history-reconcile.sh"
+    local rc_inst="$HOME/.local/lib/nyiakeeper/git-history-reconcile.sh"
+    local rc_lib=""
+    [[ -f "$rc_dev" ]] && rc_lib="$rc_dev"
+    [[ -z "$rc_lib" && -f "$rc_inst" ]] && rc_lib="$rc_inst"
+    [[ -z "$rc_lib" ]] && return 0
+    # shellcheck disable=SC1090
+    source "$rc_lib"
+
+    local shallow="$project/.nyiakeeper/git-shallow"
+    local pending
+    pending="$(detect_pending_shallow_commits "$project" "$shallow")"
+    [[ -z "$pending" ]] && return 0
+
+    local count
+    count=$(echo "$pending" | grep -c .)
+    echo ""
+    print_warning "git history cutoff: $count un-reconciled commit(s) in the protected session."
+    print_info "Review them:  nyia git-history reconcile"
+    print_info "(Your real repository was not modified — reconcile is a deliberate step.)"
 }
 
 get_canonical_container_path() {
@@ -2678,6 +3601,74 @@ run_docker_container() {
         fi
     fi
 
+    # Resolve the network egress policy + ensure the bridge under restrict-local
+    # (Plan 280a). FAIL-CLOSED: refuse to launch if the bridge can't be created.
+    if ! setup_egress_for_launch "$assistant_cli" "$project_path"; then
+        cleanup_env_file
+        return 1
+    fi
+
+    # A user must not hand-select the egress variant directly: it bypasses the policy
+    # machinery. Gate on IDENTITY, not the spoofable -egress tag suffix (M3) — a genuine
+    # egress image re-tagged without the suffix would otherwise slip past. The variant is
+    # chosen ONLY by the restrict-local block below. (Plan 283 H4/M3)
+    if is_egress_hardened_image "$full_image_name"; then
+        print_error "'$full_image_name' is an egress-hardened image and cannot be selected directly."
+        print_error "Enable it via: nyia config project network_egress_policy=restrict-local"
+        cleanup_env_file
+        return 1
+    fi
+
+    # Under restrict-local, launch the egress-hardened image variant (Plan 280b/283).
+    # FAIL-CLOSED at every gate: pull the variant (end users), then verify it is a
+    # GENUINE hardened image by IDENTITY (label + entrypoint, not the -egress tag), and
+    # only then flip to it. NET_ADMIN is granted downstream only after this passes.
+    if [[ "${NYIA_EFFECTIVE_EGRESS_POLICY:-off}" == "restrict-local" ]]; then
+        local _egress_image
+        _egress_image="$(egress_variant_image_name "$full_image_name")"
+
+        # Trusted source (M2): restrict-local grants NET_ADMIN, so only allow the egress
+        # variant of a trusted image — the nyiakeeper registry namespace or a local image
+        # the user built. Blocks `--image evil.io/x` from escalating to NET_ADMIN.
+        if ! _is_trusted_egress_source "$_egress_image"; then
+            print_error "network egress: '$_egress_image' is not from a trusted source."
+            print_error "Under restrict-local only nyiakeeper images (or locally-built ones) may run with NET_ADMIN."
+            print_error "Refusing to launch (FAIL-CLOSED)."
+            cleanup_env_file
+            return 1
+        fi
+
+        # End-user pull: fetch the published variant BEFORE the presence check (the
+        # generic pull later in this function runs too late). Registry images only.
+        if [[ "$_egress_image" == ghcr.io/* ]] && ! docker image inspect "$_egress_image" >/dev/null 2>&1; then
+            print_status "Pulling egress-hardened image: $_egress_image"
+            docker pull "$_egress_image" >/dev/null 2>&1 || true
+        fi
+
+        if ! docker image inspect "$_egress_image" >/dev/null 2>&1; then
+            print_error "network egress: hardened image '$_egress_image' not available (pull failed or not published)."
+            print_error "End users: ensure network access to the registry; maintainers build it with:"
+            print_error "  nyia-${assistant_cli} --build --dev --egress    # dev image + variant"
+            print_error "  nyia-${assistant_cli} --build --egress          # release image + variant"
+            print_error "Refusing to launch under restrict-local (FAIL-CLOSED)."
+            cleanup_env_file
+            return 1
+        fi
+
+        # Identity gate: a present-but-wrong image (no egress label, wrong entrypoint, or a
+        # firewall older than the minimum) must NOT run with NET_ADMIN. Refuse it.
+        if ! is_egress_hardened_image "$_egress_image"; then
+            print_error "network egress: '$_egress_image' is not a genuine egress-hardened image"
+            print_error "(missing org.nyia.egress label / wrong entrypoint / firewall too old)."
+            print_error "Refusing to launch under restrict-local (FAIL-CLOSED)."
+            cleanup_env_file
+            return 1
+        fi
+
+        full_image_name="$_egress_image"
+        print_verbose "Using egress-hardened image: $full_image_name (identity verified)"
+    fi
+
     # Pass work branch to container if set (for --work-branch support)
     if [[ -n "${NYIA_WORK_BRANCH:-}" ]]; then
         docker_env_args+=(-e NYIA_WORK_BRANCH="${NYIA_WORK_BRANCH}")
@@ -2733,6 +3724,13 @@ run_docker_container() {
     else
         VOLUME_ARGS=("-v" "$project_path:$container_path:rw")
         print_verbose "Using direct mount (exclusions not available)"
+    fi
+
+    # Layer the protected shallow .git over the project's .git when a history
+    # cutoff is configured (Plan 278a). FAIL-CLOSED: abort launch if it can't build.
+    if ! apply_git_history_cutoff_mount "$project_path" "$container_path" "$assistant_cli"; then
+        cleanup_env_file
+        return 1
     fi
 
     # Isolate node_modules from host with tmpfs (writable by any user, container-only)
@@ -2795,6 +3793,7 @@ run_docker_container() {
     docker run -it --rm \
         $(get_docker_network_args) \
         $(get_docker_user_args) \
+        $(get_egress_security_args) \
         "${shm_args[@]}" \
         "${sandbox_security_args[@]}" \
         -w "$container_path" \
@@ -2807,9 +3806,10 @@ run_docker_container() {
         "${docker_env_args[@]}" \
         --name "$container_name" \
         "$full_image_name" "${final_args[@]}"
-    
+
     # Cleanup immediately after Docker run
     cleanup_env_file
+    git_history_post_session_notice "$project_path"
     trap - EXIT
 }
 
@@ -2837,10 +3837,15 @@ set_api_key_helper() {
         return 0
     fi
     
-    # Look for auth.json from codex login
+    # Look for auth.json from codex login — same profile-resolved dir login wrote to.
     local nyia_home=$(get_nyiakeeper_home)
-    local auth_file="$nyia_home/$assistant_cli/auth.json"
-    
+    local active_profile auth_dir
+    active_profile="$(resolve_active_profile)"
+    if ! auth_dir="$(resolve_assistant_auth_dir "$nyia_home" "$assistant_cli" "$active_profile")"; then
+        return 1
+    fi
+    local auth_file="$auth_dir/auth.json"
+
     if [[ ! -f "$auth_file" ]]; then
         print_error "No auth.json found. Please run: $assistant_name --login first"
         return 1
@@ -2891,7 +3896,17 @@ login_assistant() {
     local docker_image="${7:-}"
 
     local nyia_home=$(get_nyiakeeper_home)
-    local global_config_dir="$nyia_home/$assistant_cli"
+    # Resolve the auth dir through the active profile (Plan 286). DEFAULT profile
+    # returns the legacy "$nyia_home/$assistant_cli" path unchanged (BC). A bad
+    # profile name fails closed — never silently fall back to another account.
+    local active_profile
+    active_profile="$(resolve_active_profile)"
+    local global_config_dir
+    if ! global_config_dir="$(resolve_assistant_auth_dir "$nyia_home" "$assistant_cli" "$active_profile")"; then
+        return 1
+    fi
+    # Show which profile/account this login targets (Plan 289; silent for default).
+    print_active_profile_banner "$nyia_home" "$active_profile" || true
     mkdir -p "$global_config_dir"
 
     # Backup config before login (protects against corruption)
@@ -2909,6 +3924,10 @@ login_assistant() {
         propagate_team_agents "$assistant_cli" "$team_dir" "$nyia_home"
     fi
 
+    # Sync + propagate the Git-backed marketplace (Plan 246a). Global scope here
+    # (login is not project-bound); fail-open, never blocks login.
+    propagate_marketplace_content "$assistant_cli" "$nyia_home" ""
+
     # Source provider-specific hooks if they exist (ensure functions are available)
     local provider_hooks_file="$dockerfile_path/${assistant_cli}-hooks.sh"
     if [[ -f "$provider_hooks_file" ]]; then
@@ -2916,9 +3935,27 @@ login_assistant() {
         source "$provider_hooks_file"
     fi
 
-    # Check if already authenticated (unless --force used)
+    # Check if already authenticated (unless --force used). Gemini login is an
+    # active auth refresh path, so existing files are reported but not trusted.
     if [[ "${FORCE_LOGIN:-false}" != "true" ]]; then
-        if check_credentials "$assistant_cli" "$global_config_dir" "$config_dir_name" "$API_KEY_ENV"; then
+        if [[ "$assistant_cli" == "gemini" ]]; then
+            print_gemini_unverified_credentials_message "$global_config_dir"
+        elif [[ "$assistant_cli" == "claude" ]] && \
+             check_credentials "$assistant_cli" "$global_config_dir" "$config_dir_name" "$API_KEY_ENV"; then
+            # Plan 274: file presence is not proof of valid auth. Report the files
+            # as found-but-unverified and steer 401 users to forced reauth instead
+            # of claiming "already authenticated".
+            print_info "🔎 Claude credential files found, but not verified."
+            print_info "📁 Config directory: $global_config_dir"
+            if [[ -f "$global_config_dir/.credentials.json" ]]; then
+                print_info "📁 Credentials: Found (not verified)"
+            fi
+            echo ""
+            print_info "💡 If Claude reports 'API Error: 401 Invalid authentication credentials',"
+            print_info "   refresh your login with:"
+            print_info "   nyia-claude --login --force"
+            return 0
+        elif check_credentials "$assistant_cli" "$global_config_dir" "$config_dir_name" "$API_KEY_ENV"; then
             print_success "✅ $assistant_cli is already authenticated"
             print_info "📁 Config directory: $global_config_dir"
 
@@ -2937,10 +3974,19 @@ login_assistant() {
         fi
     else
         print_info "🔄 Force login requested - proceeding with re-authentication"
+        if [[ "$assistant_cli" == "gemini" ]]; then
+            if ! prepare_gemini_force_login_backup "$global_config_dir"; then
+                return 1
+            fi
+        elif [[ "$assistant_cli" == "claude" ]]; then
+            if ! prepare_claude_force_login_backup "$global_config_dir"; then
+                return 1
+            fi
+        fi
     fi
 
     # If credentials were missing (not force mode), show login start message
-    if [[ "${FORCE_LOGIN:-false}" != "true" ]]; then
+    if [[ "${FORCE_LOGIN:-false}" != "true" && "$assistant_cli" != "gemini" ]]; then
         print_credential_failure_message "$assistant_cli" "login"
     fi
 
@@ -2950,7 +3996,14 @@ login_assistant() {
         print_error "Failed to select Docker image for login"
         exit 1
     fi
-    
+
+    # Login overrides the entrypoint with bash, so the egress root-init never runs — an
+    # egress image here would be a ROOT shell on Docker Desktop. Refuse it. (Plan 283 M4)
+    if is_egress_hardened_image "$full_image_name"; then
+        print_error "Login cannot use an egress-hardened image (it would bypass the firewall + run as root)."
+        exit 1
+    fi
+
     # Check if the selected image exists (with registry pull retry on inspect failure)
     if ! docker image inspect "$full_image_name" >/dev/null 2>&1; then
         # Inspect failed — try pulling if it looks like a registry image (macOS Docker Desktop compat)
@@ -2991,9 +4044,21 @@ login_assistant() {
         esac
         print_verbose "Fallback login command: ${login_cmd[*]}"
     fi
+    # Plan 274: normalize a stale Claude device_code config to a supported mode
+    # before building the login command, so `claude /quit` never receives an
+    # unsupported `--device-code` flag.
+    auth_method="$(normalize_claude_auth_method "$assistant_cli" "$auth_method")"
+
     case "$auth_method" in
         device_code)
-            login_cmd+=("--device-code")
+            # Plan 274: only append the generic --device-code flag for providers
+            # whose login CLI actually supports it. No current provider does, so
+            # this guards against stale configs producing unsupported commands.
+            if provider_supports_device_code_flag "$assistant_cli"; then
+                login_cmd+=("--device-code")
+            else
+                print_verbose "Skipping --device-code: not supported by $assistant_cli login command"
+            fi
             ;;
         token_setup)
             # Claude setup-token doesn't require additional flags
@@ -3042,6 +4107,10 @@ login_assistant() {
         -e NYIA_ASSISTANT_CLI="$assistant_cli"
         -e NYIA_CONTEXT_DIR="$config_dir_name"
     )
+
+    if [[ "$assistant_cli" == "gemini" ]]; then
+        docker_opts+=(-e NYIA_OPERATION_TYPE=auth)
+    fi
 
     if [[ "$auth_method" == "chatgpt_signin" ]]; then
         if ! uses_docker_desktop; then
@@ -3383,8 +4452,19 @@ run_assistant() {
     # Create data directory if needed
     mkdir -p "$project_data_dir"
 
-    # Create assistant config directory - use CLI name for consistency with login
-    local global_config_dir="$nyiakeeper_home/$assistant_cli"
+    # Create assistant config directory - use CLI name for consistency with login.
+    # Resolve through the active profile (Plan 286) so the launch mounts the SAME
+    # auth dir that `login` wrote to. DEFAULT => legacy path (BC); bad name fails closed.
+    local active_profile
+    active_profile="$(resolve_active_profile)"
+    local global_config_dir
+    if ! global_config_dir="$(resolve_assistant_auth_dir "$nyiakeeper_home" "$assistant_cli" "$active_profile")"; then
+        return 1
+    fi
+    # Show which profile/account this session uses (Plan 289; silent for default).
+    # Banner lives ONLY here + login_assistant — do NOT add a third call site
+    # (run_debug_shell / --shell / workspace all route through run_assistant).
+    print_active_profile_banner "$nyiakeeper_home" "$active_profile" || true
     mkdir -p "$global_config_dir"
 
     # Container path for credentials (default: uses config value or assistant CLI)
@@ -3407,6 +4487,10 @@ run_assistant() {
         propagate_team_skills "$assistant_cli" "$team_dir" "$nyiakeeper_home"
         propagate_team_agents "$assistant_cli" "$team_dir" "$nyiakeeper_home"
     fi
+
+    # Sync + propagate the Git-backed marketplace (Plan 246a). Runs AFTER team
+    # propagation (so team wins) and BEFORE project-shared. Fail-open: never blocks.
+    propagate_marketplace_content "$assistant_cli" "$nyiakeeper_home" "$project_path"
 
     # Propagate project-shared skills and agents to assistant project dir
     propagate_shared_skills "$assistant_cli" "$project_path"
@@ -3440,8 +4524,11 @@ run_assistant() {
             echo ""
             read -r -p "Enter your Mistral API key (or press Enter to cancel): " vibe_api_key
             if [[ -n "$vibe_api_key" ]]; then
-                # Save to config file
+                # Save to config file. global_config_dir is profile-resolved (Plan 286),
+                # so the sibling config/ tracks the profile (default => $nyia_home/config,
+                # named => profiles/<p>/config). Ensure that dir exists for a fresh profile.
                 local vibe_config_file="$global_config_dir/../config/vibe.conf"
+                mkdir -p "$(dirname "$vibe_config_file")"
                 if [[ -f "$vibe_config_file" ]]; then
                     # Append to existing config
                     echo "" >> "$vibe_config_file"

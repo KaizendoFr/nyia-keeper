@@ -134,26 +134,6 @@ show_config_dump() {
     done
 }
 
-show_config_view() {
-    echo "Nyia Keeper Effective Configuration:"
-    echo ""
-    echo "Home Directory: $NYIAKEEPER_HOME"
-    echo "  Status: $(if [[ -d "$NYIAKEEPER_HOME" ]]; then echo "EXISTS"; else echo "MISSING"; fi)"
-    echo ""
-    
-    echo "Available Assistants:"
-    if [[ -d "$CONFIG_DIR" ]]; then
-        for conf_file in "$CONFIG_DIR"/*.conf; do
-            if [[ -f "$conf_file" ]]; then
-                local assistant_name=$(basename "$conf_file" .conf)
-                echo "  - $assistant_name ($(basename "$conf_file"))"
-            fi
-        done
-    else
-        echo "  Config directory not found: $CONFIG_DIR"
-    fi
-    
-}
 
 show_global_status() {
     echo "Nyia Keeper Global Status:"
@@ -253,55 +233,28 @@ esac
 # Runtime dispatcher with full functionality
 case "${1:-help}" in
     config)
-        # Handle configuration commands
-        if [[ -z "${2:-}" ]]; then
-            echo "Usage: nyia config <command>"
-            echo ""
-            echo "Commands:"
-            echo "  list [--show-origin]  Show configuration values"
-            echo "  dump                  Show all configuration with environment"
-            echo "  view                  Show effective configuration"
-            echo "  get <key>            Get specific configuration value"
-            echo ""
-            echo "Available keys for 'get':"
-            echo "  home, NYIAKEEPER_HOME    Home directory path"
-            echo "  config, CONFIG_DIR         Config directory path"
-            echo "  data, DATA_DIR             Data directory path"
-            echo ""
-            echo "Examples:"
-            echo "  nyia config list --show-origin"
-            echo "  nyia config get home"
-            exit 0
+        # Shared config UX (Plan 282). NOTE: the runtime top-level case is not a
+        # function, so NO 'local' here. The installer rewrites this lib path for
+        # the installed layout (runtime-install.sh, Solution B).
+        _cc="$script_dir/../lib/config-commands.sh"
+        if [[ ! -f "$_cc" ]]; then
+            echo "Error: config commands library not found: $_cc" >&2
+            exit 1
         fi
-        
-        local subcommand="$2"
-        case "$subcommand" in
+        # shellcheck disable=SC1090
+        source "$_cc"
+        shift  # drop 'config'
+        case "${1:-}" in
             list)
-                local show_origin="false"
-                if [[ "${3:-}" == "--show-origin" ]]; then
-                    show_origin="true"
-                fi
-                show_config_list "$show_origin"
+                _show_origin="false"
+                [[ "${2:-}" == "--show-origin" ]] && _show_origin="true"
+                show_config_list "$_show_origin"
                 ;;
             dump)
                 show_config_dump
                 ;;
-            view)
-                show_config_view
-                ;;
-            get)
-                local key="${3:-}"
-                case "$key" in
-                    NYIAKEEPER_HOME|home) echo "$NYIAKEEPER_HOME" ;;
-                    CONFIG_DIR|config) echo "$CONFIG_DIR" ;;
-                    DATA_DIR|data) echo "$NYIAKEEPER_HOME/data" ;;
-                    *) echo "Unknown config key: $key" >&2; exit 1 ;;
-                esac
-                ;;
             *)
-                echo "Unknown config command: $subcommand" >&2
-                echo "Use 'nyia config' for usage information"
-                exit 1
+                nyia_config_command "$@"
                 ;;
         esac
         ;;
@@ -358,6 +311,74 @@ case "${1:-help}" in
         fi
         
         handle_exclusions_command "$@"
+        ;;
+    marketplace)
+        # Handle marketplace command (Plan 246a)
+        shift
+        script_dir_real="$(dirname "$(realpath "$0")")"
+        marketplace_lib="$script_dir_real/../lib/marketplace-commands.sh"
+
+        if [[ -f "$marketplace_lib" ]]; then
+            source "$marketplace_lib"
+        else
+            echo "Error: Marketplace commands library not found"
+            echo "Missing: $marketplace_lib"
+            exit 1
+        fi
+
+        subcommand="${1:-help}"
+        shift || true
+        case "$subcommand" in
+            init)
+                marketplace_init "$@"
+                ;;
+            help|--help|-h)
+                marketplace_help
+                ;;
+            *)
+                echo "Error: Unknown marketplace command: $subcommand" >&2
+                marketplace_help
+                exit 1
+                ;;
+        esac
+        ;;
+    profile)
+        # Authentication profiles (Plan 286) — read-only enumeration.
+        shift
+        script_dir_real="$(dirname "$(realpath "$0")")"
+        # Installed layout keeps libs under ../lib/nyiakeeper/ (Plan 235 candidate-probe).
+        profile_lib="$script_dir_real/../lib/profile-commands.sh"
+        [[ -f "$profile_lib" ]] || profile_lib="$script_dir_real/../lib/nyiakeeper/profile-commands.sh"
+        if [[ -f "$profile_lib" ]]; then
+            source "$profile_lib"
+        else
+            echo "Error: profile commands library not found" >&2
+            echo "Missing: $profile_lib" >&2
+            exit 1
+        fi
+        handle_profile_command "$@"
+        ;;
+    git-history|git-shallow)
+        # Git history cutoff lifecycle (Plan 278b). git-shallow is a hidden alias.
+        shift
+        script_dir_real="$(dirname "$(realpath "$0")")"
+        for _gh_lib in git-history-cutoff.sh git-history-reconcile.sh command-policy.sh workspace.sh; do
+            # Installed layout keeps libs under ../lib/nyiakeeper/ (Plan 235 candidate-probe).
+            _gh_path="$script_dir_real/../lib/$_gh_lib"
+            [[ -f "$_gh_path" ]] || _gh_path="$script_dir_real/../lib/nyiakeeper/$_gh_lib"
+            if [[ -f "$_gh_path" ]]; then
+                source "$_gh_path"
+            else
+                echo "Error: git-history library not found: $_gh_lib" >&2
+                exit 1
+            fi
+        done
+        gh_project="$(pwd)"
+        if [[ ! -d "$gh_project/.git" && ! -f "$gh_project/.nyiakeeper/workspace.conf" ]]; then
+            echo "Error: not a git repository or workspace root: $gh_project" >&2
+            exit 1
+        fi
+        nyia_git_history_command "$gh_project" "$@"
         ;;
     completions)
         # Output shell completion script to stdout
@@ -423,6 +444,7 @@ case "${1:-help}" in
         echo "  nyia config <command>       # Configure system settings"
         echo "  nyia clean                  # Clean old Docker images"
         echo "  nyia exclusions [command]   # Manage file exclusions"
+        echo "  nyia marketplace init       # Scaffold a private/team marketplace"
         echo "  nyia update <subcommand>    # Update management"
         echo "  nyia rollback               # Rollback to previous version"
         echo "  nyia completions <shell>    # Generate shell auto-completion (bash, zsh)"

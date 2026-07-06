@@ -27,7 +27,7 @@ API_KEY_ENV="GEMINI_API_KEY"  # Google AI Studio API key
 
 # === OPTIONAL CONFIGURATION ===
 # Required for some account types (Workspace, enterprise, outside supported regions)
-export GOOGLE_CLOUD_PROJECT="your-project-name"
+# export GOOGLE_CLOUD_PROJECT="your-project-name"
 
 # === RAG SETTINGS ===
 # Embedding model for codebase search (requires Ollama on host)
@@ -35,4 +35,3 @@ export GOOGLE_CLOUD_PROJECT="your-project-name"
 # To use: nyia-gemini --rag
 # Install model: ollama pull nomic-embed-text
 NYIA_RAG_MODEL="nomic-embed-text"
-

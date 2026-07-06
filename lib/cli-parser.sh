@@ -48,6 +48,10 @@ export SETUP_MODE="false"
 export LIST_IMAGES="false"
 export DOCKER_IMAGE=""
 export FLAVOR=""
+export BUILD_EGRESS=""
+# Named authentication profile selected via --profile (Plan 286). Empty => no CLI
+# override; resolve_active_profile then falls back to global config, then "default".
+export NYIA_AUTH_PROFILE_CLI=""
 export LIST_FLAVORS="false"
 
 # Agent persona selection (Plan 149)
@@ -166,7 +170,9 @@ get_global_args() {
 # Get description for assistant arguments
 get_assistant_arg_desc() {
     case "$1" in
+        "--egress") echo "Build the egress-hardened variant (use with --build or --build-custom-image; Plan 280/283)" ;;
         "--image") echo "Select specific Docker image (tag or repo:tag)" ;;
+        "--profile") echo "Use a named profile: a separate account that keeps your content (auth-only); personas get their own (Plans 286/288)" ;;
         "--flavor") echo "Select assistant flavor/variant (e.g., node, python, rust)" ;;
         "--list-flavors") echo "List available flavors for this assistant" ;;
         "--no-cache") echo "Force Docker rebuild without cache (use with --build or --build-custom-image)" ;;
@@ -198,7 +204,7 @@ get_assistant_arg_desc() {
 
 # Get all assistant arguments (for iteration)
 get_assistant_args() {
-    echo "--image --flavor --list-flavors --no-cache --status --list-images --base-branch --work-branch,-w --create --build-custom-image --setup --login --check-requirements --skip-checks --shell --set-api-key --disable-exclusions --agent --list-agents --list-skills --workspace-init --rag --rag-verbose"
+    echo "--image --profile --flavor --list-flavors --no-cache --status --list-images --base-branch --work-branch,-w --create --build-custom-image --egress --setup --login --check-requirements --skip-checks --shell --set-api-key --disable-exclusions --agent --list-agents --list-skills --workspace-init --rag --rag-verbose"
 }
 
 # Get description for dispatcher arguments
@@ -208,6 +214,9 @@ get_dispatcher_arg_desc() {
         "list") echo "List all available assistants" ;;
         "status") echo "Show global Nyia Keeper status" ;;
         "exclusions") echo "Manage mount exclusions for security" ;;
+        "marketplace") echo "Manage a private/team marketplace (init)" ;;
+        "profile") echo "Manage profiles: list, create (auth-only account, or --persona for its own content)" ;;
+        "git-history") echo "Review/reconcile the assistant's commits under a history cutoff" ;;
         "update") echo "Update management (status, list, check, install)" ;;
         "rollback") echo "Rollback to previous version" ;;
         "completions") echo "Generate shell auto-completion scripts (bash, zsh)" ;;
@@ -218,7 +227,7 @@ get_dispatcher_arg_desc() {
 
 # Get all dispatcher arguments (for iteration)
 get_dispatcher_args() {
-    echo "config list status exclusions update rollback completions logo"
+    echo "config list status exclusions marketplace profile git-history update rollback completions logo"
 }
 
 # === HELP SYSTEM ===
@@ -418,6 +427,7 @@ EOF
 Configuration:
   --disable-exclusions     # Disable mount exclusions
   --image <tag>           # Use specific image
+  --profile <name>        # Named profile: separate account (auth-only keeps your content)
   --check-requirements    # Check system requirements
   --setup                 # Interactive setup (OpenCode)
   --set-api-key           # Helper to set API key
@@ -489,7 +499,7 @@ parse_dispatcher_args() {
                     exit 1
                 fi
                 ;;
-            config|list|status|clean|exclusions|update|rollback|completions|logo|help)
+            config|list|status|clean|exclusions|marketplace|profile|git-history|git-shallow|update|rollback|completions|logo|help)
                 COMMAND="$1"
                 shift
                 REMAINING_ARGS=("$@")
@@ -540,6 +550,13 @@ parse_assistant_args() {
                     exit 1
                 fi
                 ;;
+            --egress)
+                # Build the egress-hardened variant. Pairs with --build (dev) OR
+                # --build-custom-image (end users). NOT dev-only — end users need it for
+                # --build-custom-image. (Plan 283)
+                export BUILD_EGRESS="true"
+                shift
+                ;;
             --image)
                 if [[ -n "$2" ]]; then
                     export DOCKER_IMAGE="$2"
@@ -549,6 +566,21 @@ parse_assistant_args() {
                     echo "Usage: --image <tag|repo:tag>" >&2
                     exit 1
                 fi
+                ;;
+            --profile)
+                # Named authentication profile (multiple accounts per assistant, Plan 286).
+                # Strict slug, no traversal — it becomes a path + docker -v arg.
+                if [[ -z "${2:-}" ]]; then
+                    echo "Error: --profile requires a name" >&2
+                    echo "Usage: --profile <name>   (letters, digits, . _ - ; no '..')" >&2
+                    exit 1
+                fi
+                if [[ "$2" != "default" ]] && { [[ "$2" == *".."* ]] || ! [[ "$2" =~ ^[A-Za-z0-9]([A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$ ]]; }; then
+                    echo "Error: Invalid --profile '$2'. Use letters, digits, . _ - (no '..', '/', ':' or spaces)." >&2
+                    exit 1
+                fi
+                export NYIA_AUTH_PROFILE_CLI="$2"
+                shift 2
                 ;;
             --flavor)
                 if [[ -z "${2:-}" ]]; then
@@ -745,7 +777,7 @@ parse_assistant_args() {
                 done
                 
                 # Check for common dispatcher commands used incorrectly
-                if [[ "$1" == "exclusions" || "$1" == "config" || "$1" == "list" || "$1" == "status" || "$1" == "clean" ]]; then
+                if [[ "$1" == "exclusions" || "$1" == "marketplace" || "$1" == "profile" || "$1" == "config" || "$1" == "list" || "$1" == "status" || "$1" == "clean" ]]; then
                     echo "Error: '$1' is a system command, not an assistant command" >&2
                     echo "" >&2
                     echo "For system commands, use the dispatcher:" >&2
@@ -938,6 +970,14 @@ validate_args() {
         echo "  --flavor node           # Use flavor system" >&2
         echo "  --image custom:tag      # Use specific image" >&2
         exit 1
+    fi
+
+    # --egress only affects a BUILD; alone it does nothing and (security-framed flag) a
+    # silent no-op is the wrong failure mode. Warn, naming the run-time enforcement path.
+    # (Plan 283 S1 — outside @DEV_BUILD so runtime users see it too.)
+    if [[ "${BUILD_EGRESS:-}" == "true" && "${BUILD_IMAGE:-false}" != "true" && "${BUILD_CUSTOM_IMAGE:-false}" != "true" ]]; then
+        echo "Warning: --egress has no effect without --build or --build-custom-image." >&2
+        echo "  To enforce egress at run time: nyia config project network_egress_policy=restrict-local" >&2
     fi
 
     # Reject building a custom image whose base is itself a custom pseudo-flavor (Plan 266).

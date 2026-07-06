@@ -32,6 +32,7 @@ NYIA_RAG_MODEL="nomic-embed-text"
 #           prompts for a new branch name interactively.
 #   true  - auto-create a timestamped branch (e.g., claude-2026-03-08-143000).
 #           This was the original default behavior.
+# Also a `nyia config` key: `nyia config global auto_branch=true` (Plan 281).
 NYIA_AUTO_BRANCH="false"
 
 # === PROTECTED BRANCHES ===

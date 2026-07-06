@@ -6,6 +6,13 @@
 # This module provides functions to detect, parse, and manage workspace configurations
 # that allow a single Nyia Keeper session to work across multiple related repositories.
 
+# Load guard — this module has `readonly` declarations, so re-sourcing (e.g. when a
+# subcommand re-sources it alongside bin/nyia) would print "readonly variable" noise.
+if [[ -n "${_NYIA_WORKSPACE_LOADED:-}" ]]; then
+    return 0 2>/dev/null || true
+fi
+_NYIA_WORKSPACE_LOADED=1
+
 # === WORKSPACE DETECTION ===
 
 # Returns 0 if workspace.conf exists, 1 otherwise
@@ -20,7 +27,14 @@ is_workspace() {
 # Known workspace.conf directive prefixes (key=value lines)
 # Only these prefixes are intercepted as directives; all other lines
 # are passed to the repo parser (including paths containing '=').
-readonly _WORKSPACE_DIRECTIVE_PREFIXES=("sync_branches")
+# Defensive: only declare if unset. The load guard above stops a re-source of THIS
+# copy, but a STALE installed copy (no guard) sourced first in the same shell would set
+# this readonly, then this copy's naked re-declaration would abort under `set -e`
+# (seen in dual-install: ~/.local/lib + dev both sourced). Guarding the declaration
+# makes the lib idempotent regardless of which/how many copies are sourced. (Plan 283)
+if [[ -z "${_WORKSPACE_DIRECTIVE_PREFIXES+x}" ]]; then
+    readonly _WORKSPACE_DIRECTIVE_PREFIXES=("sync_branches")
+fi
 
 # Internal: Check if a trimmed line is a known workspace.conf directive
 # Returns 0 if directive, 1 if not

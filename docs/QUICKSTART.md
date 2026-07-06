@@ -14,7 +14,7 @@ source ~/.config/nyiakeeper/env
 ```bash
 curl -fsSL https://raw.githubusercontent.com/KaizendoFr/nyia-keeper/main/scripts/install-macos.sh | bash
 ```
-See [macOS Setup Guide](docs/MACOS_SETUP.md) for Docker Desktop installation and troubleshooting.
+See [macOS Setup Guide](MACOS_SETUP.md) for Docker Desktop installation and troubleshooting.
 
 ## Choose Your Assistant
 
@@ -82,7 +82,7 @@ nyia-claude --work-branch feature/my-feature --create
 nyia-claude --work-branch feature/my-feature
 ```
 
-See [docs/BRANCH_MANAGEMENT.md](docs/BRANCH_MANAGEMENT.md) for detailed workflows.
+See [docs/BRANCH_MANAGEMENT.md](BRANCH_MANAGEMENT.md) for detailed workflows.
 
 ## Built-in Skills
 
@@ -140,7 +140,7 @@ newgrp docker
 - **Full Documentation**: [GitHub Repository](https://github.com/KaizendoFr/nyia-keeper)
 - **Advanced Usage**: `nyia-claude --help`
 - **Custom Overlays**: Check `~/.config/nyiakeeper/claude/overlay/`
-- **macOS Setup**: [docs/MACOS_SETUP.md](docs/MACOS_SETUP.md)
+- **macOS Setup**: [docs/MACOS_SETUP.md](MACOS_SETUP.md)
 
 ---
 
