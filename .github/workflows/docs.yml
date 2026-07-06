@@ -1,0 +1,35 @@
+name: Docs Build Check
+
+# Validates the MkDocs site builds cleanly (--strict) on every docs change in THIS repo.
+# It does NOT deploy — the docs SITE is published from the PUBLIC repo
+# (kaizendofr.github.io/nyia-keeper). See .github/templates/docs-deploy.yml for the
+# deploy workflow that is installed once on the public repo. (Plan 285)
+
+on:
+  push:
+    branches: [master, dev]
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install docs deps (pinned)
+        run: pip install -r docs/requirements.txt
+      - name: Build site (strict — fails on broken links / nav)
+        run: mkdocs build --strict
