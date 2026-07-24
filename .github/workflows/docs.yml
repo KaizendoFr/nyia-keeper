@@ -1,18 +1,17 @@
-name: Docs Build Check
-
-# Validates the MkDocs site builds cleanly (--strict) on every docs change in THIS repo.
-# It does NOT deploy — the docs SITE is published from the PUBLIC repo
-# (kaizendofr.github.io/nyia-keeper). See .github/templates/docs-deploy.yml for the
-# deploy workflow that is installed once on the public repo. (Plan 285)
+# Docs site DEPLOY workflow — install this ONCE on the PUBLIC repo (KaizendoFr/nyia-keeper)
+# as .github/workflows/docs.yml. It cannot be synced automatically: sync-public preserves
+# the public repo's .github and never overwrites it from dist/runtime. (Plan 285)
+#
+# One-time setup on the public repo:
+#   1. Copy this file to .github/workflows/docs.yml in KaizendoFr/nyia-keeper.
+#   2. Settings -> Pages -> Source = "GitHub Actions".
+# The site then publishes at https://kaizendofr.github.io/nyia-keeper/ and rebuilds whenever
+# the release pipeline syncs new docs/ + mkdocs.yml into the public repo (or on dispatch).
+name: Docs Site
 
 on:
   push:
-    branches: [master, dev]
-    paths:
-      - 'docs/**'
-      - 'mkdocs.yml'
-      - '.github/workflows/docs.yml'
-  pull_request:
+    branches: [main, master]
     paths:
       - 'docs/**'
       - 'mkdocs.yml'
@@ -20,9 +19,15 @@ on:
 
 permissions:
   contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
 
 jobs:
-  build-check:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,5 +36,19 @@ jobs:
           python-version: '3.12'
       - name: Install docs deps (pinned)
         run: pip install -r docs/requirements.txt
-      - name: Build site (strict — fails on broken links / nav)
+      - uses: actions/configure-pages@v5
+      - name: Build site (strict)
         run: mkdocs build --strict
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
