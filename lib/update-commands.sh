@@ -30,7 +30,7 @@ Subcommands:
   status                Show installed version, channel, and last check time
   list                  Show available channels and recent releases
   check                 Check for updates (manual)
-  install [target]      Install update by channel name or version tag
+  install [target]      Install update by channel name (latest|beta|alpha) or version tag
   rollback              Rollback to previous version
   help                  Show this help
 
@@ -45,10 +45,14 @@ Examples:
   nyia update list                # Show available versions
   nyia update check               # Check if an update is available
   nyia update install             # Install latest for your channel
+  nyia update install beta        # Switch to beta channel and install (when available)
   nyia update install alpha       # Switch to alpha channel and install
   nyia update install latest      # Switch to latest (stable) channel
   nyia update install v0.1.0-alpha.50  # Install specific version
   nyia update rollback            # Rollback to previous version
+
+Note: the "beta" channel is fail-closed — until a beta release is published it is
+      reported as unavailable and NEVER falls back to the stable "latest" channel.
 HELPEOF
 }
 
@@ -118,21 +122,29 @@ update_list() {
     local current_version
     current_version=$(get_installed_version 2>/dev/null) || current_version=""
 
-    # Fetch channel versions (best-effort)
-    local latest_tag alpha_tag
+    # Fetch channel versions (best-effort).
+    # beta is fail-closed (Plan 312c): when the manifest has no "beta" key yet,
+    # fetch_channel_version returns non-zero and the row shows "(unavailable)" — it is
+    # NEVER shown resolving to the stable "latest" tag.
+    local latest_tag alpha_tag beta_tag
     latest_tag=$(fetch_channel_version "$CHANNEL_LATEST" 2>/dev/null) || latest_tag="(unavailable)"
     alpha_tag=$(fetch_channel_version "$CHANNEL_ALPHA" 2>/dev/null) || alpha_tag="(unavailable)"
+    beta_tag=$(fetch_channel_version "$CHANNEL_BETA" 2>/dev/null) || beta_tag="(unavailable)"
 
     # Show installed version in the row matching the active channel
-    local latest_installed="" alpha_installed=""
+    local latest_installed="" alpha_installed="" beta_installed=""
     if [[ "$current_channel" == "latest" && -n "$current_version" ]]; then
         latest_installed="$current_version"
     elif [[ "$current_channel" == "alpha" && -n "$current_version" ]]; then
         alpha_installed="$current_version"
+    elif [[ "$current_channel" == "beta" && -n "$current_version" ]]; then
+        beta_installed="$current_version"
     fi
 
+    # Ordered most-stable → least-stable: latest, beta, alpha.
     printf "  %-10s %-28s %s\n" "CHANNEL" "LATEST" "INSTALLED"
     printf "  %-10s %-28s %s\n" "latest" "$latest_tag" "$latest_installed"
+    printf "  %-10s %-28s %s\n" "beta" "$beta_tag" "$beta_installed"
     printf "  %-10s %-28s %s\n" "alpha" "$alpha_tag" "$alpha_installed"
     echo ""
 
@@ -163,6 +175,18 @@ update_check() {
     latest_version=$(fetch_latest_version "$current_version" "$channel")
 
     if [[ -z "$latest_version" ]]; then
+        # Fail-closed for beta (Plan 312c): resolution returns empty EITHER when the
+        # manifest has no "beta" key yet OR when the manifest could not be fetched
+        # (a transient network/GitHub outage). Report both possible causes plainly
+        # instead of asserting it is simply unpublished, and NEVER fall back to the
+        # stable "latest" channel.
+        if [[ "$channel" == "$CHANNEL_BETA" ]]; then
+            echo "The 'beta' channel is not available (unpublished, or could not be resolved)."
+            echo "No beta release has been published yet, or the channel manifest could not be reached"
+            echo "(a transient network/GitHub error) — if a beta was recently cut, retry shortly."
+            echo "(Not falling back to the stable 'latest' channel.)"
+            return 1
+        fi
         echo "Could not determine latest version. Check your internet connection."
         return 1
     fi
@@ -192,6 +216,23 @@ update_check() {
 
 update_install() {
     local target="${1:-}"
+
+    # Fail-closed pre-check for the beta channel (Plan 312c; fail-closed-by-absence, Plan 312a):
+    # Resolve beta BEFORE the interactive-TTY guard so an unavailable beta is rejected in EVERY
+    # context (including non-interactive/piped) and can NEVER silently fall back to the stable
+    # ":latest" channel. alpha/latest keep their original ordering (TTY guard first) for
+    # byte-for-behavior parity — only the beta target is gated here.
+    if [[ "$target" == "$CHANNEL_BETA" ]]; then
+        local _beta_probe
+        _beta_probe=$(fetch_channel_version "$CHANNEL_BETA" 2>/dev/null) || _beta_probe=""
+        if [[ -z "$_beta_probe" ]]; then
+            echo "Error: The 'beta' channel is not available (unpublished, or could not be resolved)." >&2
+            echo "  No beta release has been published yet, or the channel manifest could not be reached" >&2
+            echo "  (a transient network/GitHub error). If a beta was recently cut, retry shortly." >&2
+            echo "  (Not falling back to the stable 'latest' channel.)" >&2
+            return 1
+        fi
+    fi
 
     # TTY check: interactive install requires a terminal
     if [[ ! -t 0 ]] && [[ ! -t 1 ]]; then
@@ -226,6 +267,21 @@ update_install() {
             target=$(fetch_channel_version "$CHANNEL_ALPHA" 2>/dev/null) || target=""
             if [[ -z "$target" ]]; then
                 echo "Error: Could not resolve 'alpha' channel version." >&2
+                return 1
+            fi
+            echo "  Resolved: $target"
+            ;;
+        beta)
+            # Mirrors the alpha branch. Fail-closed: if beta is unavailable (no manifest
+            # key yet) it aborts here and NEVER falls back to the stable "latest" channel.
+            # The pre-TTY gate above already rejects an unavailable beta, so on this path
+            # beta is available; the guard below is defense-in-depth.
+            echo "Switching to 'beta' channel..."
+            channel_context="beta"
+            target=$(fetch_channel_version "$CHANNEL_BETA" 2>/dev/null) || target=""
+            if [[ -z "$target" ]]; then
+                echo "Error: The 'beta' channel is not available (unpublished, or could not be resolved)." >&2
+                echo "  No beta release has been published yet, or the channel manifest could not be reached." >&2
                 return 1
             fi
             echo "  Resolved: $target"

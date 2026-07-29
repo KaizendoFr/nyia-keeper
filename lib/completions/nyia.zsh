@@ -113,6 +113,17 @@ _nyia() {
                     'help:Show update help'
                 )
                 _describe 'update command' update_cmds
+            elif (( CURRENT == 4 )) && [[ "${words[3]}" == "install" ]]; then
+                # `nyia update install <channel>` — channel aliases.
+                # "beta" is a peer of "alpha"/"latest"; offered even before the
+                # first beta release (updater fails closed if the manifest has
+                # no beta entry). A literal version tag is also valid.
+                local -a channels=(
+                    'latest:Stable channel (default)'
+                    'alpha:Pre-release / early-adopter channel'
+                    'beta:Pre-release channel (available once the first beta is cut)'
+                )
+                _describe 'channel' channels
             fi
             ;;
         completions)

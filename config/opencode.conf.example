@@ -61,3 +61,9 @@ DOCKER_NETWORK_MODE="host"
 # Install model: ollama pull nomic-embed-text
 NYIA_RAG_MODEL="nomic-embed-text"
 
+
+# === DISPLAY METADATA (Plan 35 — shown by `nyia list`) ===
+ASSISTANT_DISPLAY_NAME="OpenCode"
+ASSISTANT_FULL_NAME="OpenCode"
+ASSISTANT_DESCRIPTION="Open-source, model-agnostic terminal AI coding agent (any cloud provider or local Ollama models)"
+ASSISTANT_PROVIDER="OpenCode (anomalyco)"

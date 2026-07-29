@@ -77,25 +77,12 @@ USER node
 
 After writing the Dockerfile, output the exact commands the user needs:
 
-### For dev distribution users (have the source repo):
 ```bash
-# Build the image (auto-detects overlay)
-./bin/nyia {assistant} --build
-
-# Preview build plan without building
-./bin/nyia {assistant} --build --dry-run
-
-# Build with a language flavor + overlay
-./bin/nyia {assistant} --build --flavor {python|node|php|rust-tauri|php-react}
-
-# Run the assistant
-./bin/nyia {assistant}
-```
-
-### For end-user distribution (installed via package):
-```bash
-# Build custom image with overlay
+# Build the custom image with your overlay
 nyia-{assistant} --build-custom-image
+
+# Build on top of a language flavor instead of the plain base
+nyia-{assistant} --build-custom-image --flavor {python|node|php|rust-tauri|php-react}
 
 # Run the assistant using the custom pseudo-flavor shortcut (Plan 266)
 nyia-{assistant} --flavor custom
@@ -109,18 +96,16 @@ After `--build-custom-image`, prefer the `--flavor custom` / `--flavor {base}-cu
 shortcut over a long `--image nyiakeeper/{assistant}-custom-{slug}:latest` tag. These
 custom pseudo-flavors are local-only selectors; `--image` remains the explicit fallback.
 
-## F) Mention Available Templates
+## F) Common Overlay Patterns (reference)
 
-If relevant, mention that overlay templates exist for reference:
-- `docker/overlay-templates/python-latest/` — Python dev environment
-- `docker/overlay-templates/data-science/` — pandas, numpy, scikit-learn, jupyter
-- `docker/overlay-templates/web-dev/` — Django, FastAPI, Flask + Node.js
-- `docker/overlay-templates/php-73/`, `php-74/`, `php-81/`, `php-82/` — PHP environments
+If relevant, offer to generate one of these common overlays (you know the recipes — just write the
+Dockerfile per Section C, no external files needed):
+- **Python dev** — Python toolchain + venv
+- **Data science** — pandas, numpy, scikit-learn, jupyter
+- **Web dev** — Django, FastAPI, Flask + Node.js
+- **PHP** — a PHP 7.3/7.4/8.1/8.2 environment
 
-Users can copy these directly:
-```bash
-cp docker/overlay-templates/{template}/Dockerfile {target-path}
-```
+(Full write-up: the Flavors & Overlays guide at https://nyia-keeper.com/USER_GUIDE_FLAVORS_OVERLAYS/)
 
 ## G) Key Reminders
 

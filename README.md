@@ -1,60 +1,56 @@
-# Nyia Keeper Multi-Assistant Infrastructure
+# Nyia Keeper
 
-Containerized environment for AI development assistants. Supporting Claude, Gemini, Codex, OpenCode, and Vibe.
+Run AI coding agents on your machine — **without handing them your secrets.** Each assistant works in
+your project inside a Docker container, but **sensitive files (`.env`, `*.key`, `id_rsa`, `.ssh/`,
+`.aws/`, `credentials.*`, …) are auto-detected and kept out of its reach** by default, you **share only
+what you choose**, and it's **git-safe by default** (work branches + protected-branch guards). On top of
+that, a repeatable **plan → review → implement → checkpoint** workflow so agents run on a leash, not on
+vibes.
 
-## 🚀 Quick Start
+This isn't VM-grade escape isolation — Docker's own Sandboxes do microVMs if that's what you need. Nyia
+is about **controlling what the AI sees and can touch on your machine**, with opinionated safe defaults.
+
+> A personal project, shared as-is. I build it for myself and use it daily — Claude Code and Gemini day
+> to day (also Codex, opencode, vibe).
+
+<!-- Demo GIFs rendered from docs/demo/*.tape (Plan 311); ship to the public repo via dist/runtime. -->
+![Nyia Keeper: a project's .env, id_rsa and .aws/ credentials are listed as excluded from the agent's reach while normal files stay readable](docs/demo/nyia-secrets.gif)
+
+## What you get
+
+- **Your secrets stay yours.** `.env`, keys, `id_rsa`, `.ssh/`, `.aws/`, `credentials.*` and more are
+  excluded from the container mount by default and replaced with a read-only placeholder — the agent
+  literally can't read them. Tune it per project (`!.env.example` to keep one visible).
+- **Git-safe by default.** Runs inside a Git repo, on a work branch, with protected-branch guards — an
+  agent can't quietly rewrite `main` or trash your tree. (Use `--skip-checks` if you really want to opt out.)
+- **A workflow, not vibes.** `make-a-plan → plan-review → implement → code-review → checkpoint`, with the
+  plan and context kept in the repo, so the next session resumes exactly where the last one stopped.
+
+  ![The reviewed workflow ships in the box: nyia-claude --list-skills shows plan-review, implement-plan, code-review, make-a-plan and more](docs/demo/nyia-workflow.gif)
+- **One setup across assistants.** Claude Code and Gemini day to day; Codex/opencode/vibe when you want them.
+
+  ![One setup, many stacks: nyia list shows the assistants and nyia-claude --list-flavors shows python, node, php, react and rust overlays](docs/demo/nyia-flavors.gif)
+
+## Quick start
 
 ```bash
-# Install
 curl -fsSL https://raw.githubusercontent.com/KaizendoFr/nyia-keeper/main/install.sh | bash
-
-# Setup (choose your assistant)
 nyia-claude --login
-
-# Use in interactive mode
 nyia-claude
 ```
 
-**→ [Complete Quick Start Guide](QUICKSTART.md)** ← *2 minute setup*
+→ **Requirements & per-OS setup:** <https://nyia-keeper.com/REQUIREMENTS/> · [Quick Start](QUICKSTART.md)
 
-## Prerequisites
+## Support & contributing
 
-- **Docker**: Required for running assistants in isolated containers
-- **Git**: For branch and context management
-- **API Key**: From your chosen AI provider (Anthropic, Google, OpenAI, etc.)
+Best-effort. **Bug reports are welcome via [Issues](https://github.com/KaizendoFr/nyia-keeper/issues).**
+I'm **not taking pull requests** — development happens in a private repo, so this one is
+distribution-only. It's licensed **AGPL-3.0-or-later OR Proprietary**, so if it's useful to you, fork it.
 
-## Supported Assistants
-
-| Assistant | Description | Command |
-|-----------|-------------|---------|
-| **Claude** | Anthropic's advanced reasoning & coding assistant | `nyia-claude` |
-| **Gemini** | Google's multimodal AI (text, images, code) | `nyia-gemini` |
-| **Codex** | OpenAI's code-focused assistant | `nyia-codex` |
-| **OpenCode** | Open-source local AI assistant | `nyia-opencode` |
-| **Vibe** | Lightweight AI for quick tasks | `nyia-vibe` |
-
-## Key Features
-
-- **Docker Isolation**: Each assistant runs in its own secure container
-- **Exclusion Lists**: Control which files/directories AI can access
-- **Git Awareness**: Automatic branch and context management
-- **Multi-Project**: Work across different codebases seamlessly
-- **Flavors**: Pre-configured environments (Python, Node, PHP, React, etc.)
-
-## Get Help
-
-```bash
-nyia list                    # List available assistants
-nyia-claude --help           # Detailed usage
-nyia-claude --status         # Check configuration
-```
+A tool I like, not a product.
 
 ## Links
 
-- **[Quick Start Guide](QUICKSTART.md)** - Get running in 2 minutes
-- **[GitHub Issues](https://github.com/KaizendoFr/nyia-keeper/issues)** - Bug reports & feature requests
-- **[GitHub Discussions](https://github.com/KaizendoFr/nyia-keeper/discussions)** - Community help
-
----
-
-Licensed under AGPL-3.0. See [LICENSE](LICENSE) for details.
+- **Docs:** <https://nyia-keeper.com>
+- **Security model:** [SECURITY.md](SECURITY.md) — what's protected, and what "hardened container, not a VM" means
+- **License:** AGPL-3.0-or-later OR Proprietary — see [LICENSE](LICENSE)

@@ -344,24 +344,33 @@ Manage Nyia Keeper installation updates and rollbacks.
 | Subcommand | Description |
 |-----------|-------------|
 | `nyia update status` | Show installed version, channel, NYIAKEEPER_HOME, and last check time |
-| `nyia update list` | Show available channels (latest, alpha) and recent releases |
+| `nyia update list` | Show available channels (latest, alpha, beta) and recent releases |
 | `nyia update check` | Manual check for updates, shows release notes if available |
-| `nyia update install [target]` | Install update by channel name (`alpha`, `latest`) or version tag |
+| `nyia update install [target]` | Install update by channel name (`alpha`, `beta`, `latest`) or version tag |
 | `nyia update rollback` | Rollback to previous version (same as `nyia rollback`) |
 | `nyia update help` | Show update subcommand help |
 
 ### Channel Management
 
-Nyia Keeper supports two update channels:
+Nyia Keeper supports three update channels:
 
 - **latest** - Stable releases (default channel)
 - **alpha** - Pre-release builds for early adopters
+- **beta** - Pre-release builds, a peer of `alpha`
 
 Switch channels with:
 ```bash
 nyia update install alpha     # Switch to alpha channel
+nyia update install beta      # Switch to beta channel
 nyia update install latest    # Switch to latest (stable) channel
 ```
+
+> **Beta availability (fail-closed by absence):** `beta` is a first-class channel
+> name, but the channel manifest carries no `beta` entry until the first beta
+> release is cut. Until then, `nyia update install beta` prints a clear
+> "beta is not available yet" message and exits non-zero — it **never** silently
+> falls back to the stable (`latest`) channel. `nyia update list` shows `beta`
+> with an availability marker.
 
 ### Backward Compatibility
 

@@ -43,7 +43,7 @@ get_find_case_args() {
 ENABLE_MOUNT_EXCLUSIONS=${ENABLE_MOUNT_EXCLUSIONS:-true}
 
 # Exclusion cache logic version — bump this when exclusion scan logic changes
-EXCL_CACHE_VERSION="2"
+EXCL_CACHE_VERSION="3"
 
 # Compute a cache key combining logic version + exclusions.conf content hash.
 # Returns: "<version>:<cksum_output>" or "<version>:noconf" if no config file.
@@ -345,7 +345,7 @@ get_exclusion_patterns() {
     
     # === KUBERNETES & CONTAINER ORCHESTRATION ===
     # Kubernetes
-    echo "kubeconfig *.kubeconfig *-kubeconfig.yaml *.kubeconfig.yml config.yaml"
+    echo "kubeconfig *.kubeconfig *-kubeconfig.yaml *.kubeconfig.yml"
     # Rancher/RKE
     echo "*.rkestate cluster.rkestate rancher-cluster.yml cluster.yml"
     # K3s
@@ -355,7 +355,7 @@ get_exclusion_patterns() {
     
     # === CONFIGURATION MANAGEMENT ===
     # Ansible
-    echo "*.vault vault_pass.txt .vault_pass ansible.cfg hosts.ini hosts inventory inventory.ini inventory.yml group_vars/*/vault host_vars/*/vault"
+    echo "*.vault vault_pass.txt .vault_pass hosts.ini hosts inventory inventory.ini inventory.yml group_vars/*/vault host_vars/*/vault"
     # Chef
     echo "*.pem knife.rb client.rb validation.pem encrypted_data_bag_secret"
     # Puppet
@@ -365,7 +365,7 @@ get_exclusion_patterns() {
     
     # === CONTAINER & BUILD TOOLS ===
     # Docker
-    echo ".dockercfg .docker/config.json docker-compose.override.yml docker-compose.prod.yml docker-compose.secrets.yml"
+    echo ".dockercfg .docker/config.json docker-compose.prod.yml docker-compose.secrets.yml"
     # Podman
     echo "containers.conf auth.json"
     # Buildah
@@ -381,7 +381,7 @@ get_exclusion_patterns() {
     # Java/Maven/Gradle
     echo "*.p8 *.jks *.keystore *.truststore settings.xml gradle.properties"
     # Go
-    echo ".netrc go.sum"
+    echo ".netrc"
     # Rust
     echo ".cargo/credentials .cargo/config.toml"
     # PHP
@@ -398,8 +398,7 @@ get_exclusion_patterns() {
     echo ".gitlab-ci-local-variables.yml"
     # CircleCI
     echo ".circleci/config.local.yml"
-    # Travis CI
-    echo ".travis.yml"
+    # Travis CI — .travis.yml removed from defaults (CI config, not a secret; Plan 250)
     # ArgoCD
     echo "argocd-*.yaml"
     # Tekton
@@ -450,8 +449,10 @@ get_exclusion_patterns() {
     echo ".git-crypt/**"
     
     # === WEB SERVERS ===
-    # Nginx
-    echo "nginx.conf sites-enabled/* sites-available/*"
+    # Nginx — nginx.conf removed from defaults (web-server config, not a secret; referenced
+    # certs/keys stay excluded via *.pem/*.key/*.crt). sites-enabled/sites-available KEPT
+    # (per-vhost configs can hold hardcoded proxy_pass creds). Plan 250.
+    echo "sites-enabled/* sites-available/*"
     # Apache
     echo ".htaccess .htpasswd httpd.conf"
     
@@ -765,6 +766,8 @@ create_volume_args() {
 
         # Build combined find expression for all directory patterns (single find call)
         local case_flag=$(get_find_case_args "$project_path")
+        # Path patterns follow the same platform case policy as names (Plan 303).
+        local path_flag="-path"; [[ "$case_flag" == "-iname" ]] && path_flag="-ipath"
         local -a dir_find_expr=()
         while IFS=' ' read -r pattern; do
             [[ -z "$pattern" ]] && continue
@@ -863,7 +866,7 @@ create_volume_args() {
             while IFS=' ' read -r pattern; do
                 [[ -z "$pattern" ]] && continue
                 [[ ${#path_find_expr[@]} -gt 0 ]] && path_find_expr+=("-o")
-                path_find_expr+=("-path" "*/$pattern")
+                path_find_expr+=("$path_flag" "*/$pattern")
             done < <(echo "$path_patterns" | tr ' ' '\n')
 
             if [[ ${#path_find_expr[@]} -gt 0 ]]; then
@@ -897,7 +900,7 @@ create_volume_args() {
             while IFS= read -r pattern; do
                 [[ -z "$pattern" ]] && continue
                 [[ ${#user_dir_path_expr[@]} -gt 0 ]] && user_dir_path_expr+=("-o")
-                user_dir_path_expr+=("-path" "$project_path/$pattern")
+                user_dir_path_expr+=("$path_flag" "$project_path/$pattern")
             done <<< "$user_dir_paths"
 
             if [[ ${#user_dir_path_expr[@]} -gt 0 ]]; then
@@ -979,7 +982,7 @@ create_volume_args() {
             while IFS= read -r pattern; do
                 [[ -z "$pattern" ]] && continue
                 [[ ${#user_file_path_expr[@]} -gt 0 ]] && user_file_path_expr+=("-o")
-                user_file_path_expr+=("-path" "$project_path/$pattern")
+                user_file_path_expr+=("$path_flag" "$project_path/$pattern")
             done <<< "$user_file_paths"
 
             if [[ ${#user_file_path_expr[@]} -gt 0 ]]; then
@@ -1114,6 +1117,8 @@ append_repo_volume_args() {
 
     local case_flag
     case_flag=$(get_find_case_args "$repo_path")
+    # Path patterns follow the same platform case policy as names (Plan 303).
+    local path_flag="-path"; [[ "$case_flag" == "-iname" ]] && path_flag="-ipath"
     local -a dir_find_expr=()
     while IFS=' ' read -r pattern; do
         [[ -z "$pattern" ]] && continue
@@ -1203,7 +1208,7 @@ append_repo_volume_args() {
         while IFS=' ' read -r pattern; do
             [[ -z "$pattern" ]] && continue
             [[ ${#path_find_expr[@]} -gt 0 ]] && path_find_expr+=("-o")
-            path_find_expr+=("-path" "*/$pattern")
+            path_find_expr+=("$path_flag" "*/$pattern")
         done < <(echo "$path_patterns" | tr ' ' '\n')
 
         if [[ ${#path_find_expr[@]} -gt 0 ]]; then
@@ -1237,7 +1242,7 @@ append_repo_volume_args() {
         while IFS= read -r pattern; do
             [[ -z "$pattern" ]] && continue
             [[ ${#user_dir_path_expr[@]} -gt 0 ]] && user_dir_path_expr+=("-o")
-            user_dir_path_expr+=("-path" "$repo_path/$pattern")
+            user_dir_path_expr+=("$path_flag" "$repo_path/$pattern")
         done <<< "$user_dir_paths"
 
         if [[ ${#user_dir_path_expr[@]} -gt 0 ]]; then
@@ -1319,7 +1324,7 @@ append_repo_volume_args() {
         while IFS= read -r pattern; do
             [[ -z "$pattern" ]] && continue
             [[ ${#user_file_path_expr[@]} -gt 0 ]] && user_file_path_expr+=("-o")
-            user_file_path_expr+=("-path" "$repo_path/$pattern")
+            user_file_path_expr+=("$path_flag" "$repo_path/$pattern")
         done <<< "$user_file_paths"
 
         if [[ ${#user_file_path_expr[@]} -gt 0 ]]; then

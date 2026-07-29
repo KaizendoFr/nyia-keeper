@@ -211,7 +211,7 @@ get_assistant_args() {
 get_dispatcher_arg_desc() {
     case "$1" in
         "config") echo "Configuration management (list, dump, view, get)" ;;
-        "list") echo "List all available assistants" ;;
+        "list") echo "List available assistants (add --compact for one-line output)" ;;
         "status") echo "Show global Nyia Keeper status" ;;
         "exclusions") echo "Manage mount exclusions for security" ;;
         "marketplace") echo "Manage a private/team marketplace (init)" ;;
@@ -267,6 +267,7 @@ EOF
 
 Examples:
   $script_name list                             # List available assistants
+  $script_name list --compact                   # One-line assistant list
   $script_name status                           # Show system status
   $script_name clean                            # Clean old images
   

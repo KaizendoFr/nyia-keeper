@@ -31,3 +31,9 @@ API_KEY_ENV="OPENAI_API_KEY"
 # Install model: ollama pull nomic-embed-text
 NYIA_RAG_MODEL="nomic-embed-text"
 
+
+# === DISPLAY METADATA (Plan 35 — shown by `nyia list`) ===
+ASSISTANT_DISPLAY_NAME="Codex"
+ASSISTANT_FULL_NAME="OpenAI Codex CLI"
+ASSISTANT_DESCRIPTION="OpenAI's agentic coding CLI for the terminal, powered by OpenAI models"
+ASSISTANT_PROVIDER="OpenAI"

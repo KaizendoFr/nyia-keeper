@@ -36,3 +36,9 @@ API_KEY_ENV="MISTRAL_API_KEY"
 # Install model: ollama pull nomic-embed-text
 NYIA_RAG_MODEL="nomic-embed-text"
 
+
+# === DISPLAY METADATA (Plan 35 — shown by `nyia list`) ===
+ASSISTANT_DISPLAY_NAME="Vibe"
+ASSISTANT_FULL_NAME="Mistral Vibe"
+ASSISTANT_DESCRIPTION="Mistral AI's coding assistant CLI, powered by Mistral models"
+ASSISTANT_PROVIDER="Mistral AI"

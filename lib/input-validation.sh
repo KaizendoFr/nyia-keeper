@@ -140,9 +140,35 @@ sanitize_branch_name() {
     echo "$branch" | sed 's/[^a-zA-Z0-9._/-]/-/g'
 }
 
+# Strip control chars (C0 range + DEL) and cap length for safe terminal display
+# of values sourced from user .conf files (Plan 35). Multibyte UTF-8 (bytes
+# >= 0x80) is left intact so legitimate names survive; only injection vectors
+# (ESC 0x1b, CR, LF, BS, BEL, DEL, ...) are removed.
+sanitize_terminal_field() {
+    local s="$1" max="${2:-64}"
+    s=$(printf '%s' "$s" | LC_ALL=C tr -d '\000-\037\177')
+    printf '%s' "${s:0:$max}"
+}
+
+# ALLOWLIST for variable names accepted from a project's .nyiakeeper/creds/env (Plan 310).
+# creds/env is attacker-controllable for nyia's core "open an untrusted repo" use case, so we
+# DEFAULT-DENY: only credential-shaped names may reach the host launcher env or the container.
+# This structurally excludes every exec/loader/interpreter/control vector (LD_*, NODE_OPTIONS,
+# PATH, HOME, BASH_ENV, GCONV_PATH, GIT_SSH_COMMAND, NYIA_*, ...) — none of which are *_KEY/
+# *_TOKEN/*_API_KEY shaped — rather than chasing an unwinnable denylist. Returns 0 if allowed.
+is_allowed_creds_var() {
+    case "$1" in
+        *_API_KEY|*_TOKEN|*_KEY) return 0 ;;
+        GOOGLE_CLOUD_PROJECT|GOOGLE_APPLICATION_CREDENTIALS) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # Export functions so they can be used after sourcing
 export -f validate_branch_name
 export -f validate_file_path
 export -f validate_image_name
 export -f validate_agent_name
 export -f sanitize_branch_name
+export -f sanitize_terminal_field
+export -f is_allowed_creds_var

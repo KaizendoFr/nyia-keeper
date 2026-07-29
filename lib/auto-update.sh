@@ -28,14 +28,17 @@ readonly MAX_RELEASE_NOTES_LINES=20
 readonly LOCK_STALE_TIMEOUT=300      # 5 minutes — real updates can exceed 60s on slow connections
 
 # Channel manifest URL — hosted on the public runtime repo (raw content).
-# Maps channel names ("latest", "alpha") to immutable release tags.
+# Maps channel names ("latest", "alpha", "beta") to immutable release tags.
 # Updated automatically for "latest" on every release.sh --push.
-# Updated manually for "alpha" via scripts/promote-channel.sh.
+# Updated manually for the "alpha"/"beta" prerelease channels via scripts/promote-channel.sh.
+# Fail-closed-by-absence (Plan 312a): a channel with NO key here is "not available yet";
+# consumers must NOT fall back to another channel (e.g. beta must never resolve to :latest).
 readonly CHANNELS_MANIFEST_URL="https://raw.githubusercontent.com/KaizendoFr/nyia-keeper/main/channels.json"
 
 # Approved channel names for channel-aware resolution.
 readonly CHANNEL_LATEST="latest"
 readonly CHANNEL_ALPHA="alpha"
+readonly CHANNEL_BETA="beta"
 
 # --- Locking ---
 
@@ -144,7 +147,7 @@ _write_check_timestamp() {
 
 # --- Channel State ---
 # Persists the user's selected update channel separately from the installed version.
-# File: $NYIAKEEPER_HOME/CHANNEL   (single line: "latest", "alpha", or empty = latest)
+# File: $NYIAKEEPER_HOME/CHANNEL   (single line: "latest", "alpha", "beta", or empty = latest)
 # An empty or missing CHANNEL file is treated as the "latest" channel.
 
 get_installed_channel() {
@@ -193,13 +196,17 @@ set_installed_channel() {
 }
 
 # Infer the update channel from a version tag string.
-# Matches the CI pipeline tagging logic (pipeline.yml:288-293):
+# Matches the CI pipeline tagging logic (.github/workflows/pipeline.yml — the
+# per-job image-tag blocks around L310+):
 #   version contains "-alpha." → "alpha"
+#   version contains "-beta."  → "beta"
 #   everything else            → "latest"
 _infer_channel_from_version() {
     local version="${1:-}"
     if [[ "$version" == *-alpha.* ]]; then
         echo "alpha"
+    elif [[ "$version" == *-beta.* ]]; then
+        echo "beta"
     else
         echo "latest"
     fi
@@ -251,7 +258,7 @@ fetch_latest_version() {
 
     # --- Channel manifest path (all channels) ---
     # Try the curated channels.json manifest first for ALL channels.
-    # "latest" = promoted stable, "alpha" = bleeding edge.
+    # "latest" = promoted stable, "alpha"/"beta" = prerelease channels.
     # Unknown/invalid channels: manifest returns empty → falls through to GitHub API.
     local manifest_tag
     manifest_tag=$(fetch_channel_version "$installed_channel") || manifest_tag=""
@@ -259,6 +266,18 @@ fetch_latest_version() {
         echo "$manifest_tag"
         return 0
     fi
+
+    # Fail-closed for the beta channel (Plan 312c; fail-closed-by-absence, Plan 312a):
+    # beta is served EXCLUSIVELY through the channels.json manifest. Until the first beta is
+    # cut, channels.json has NO "beta" key, so fetch_channel_version above returned empty. We
+    # MUST NOT fall through to the GitHub API path below — /releases/latest resolves to the
+    # STABLE release and would silently downgrade a beta user to :latest. Fail closed: return
+    # empty/non-zero so callers report "beta not available yet" and abort (never a stable
+    # fallback). alpha/latest keep their existing GitHub API fallback (parity).
+    if [[ "$installed_channel" == "$CHANNEL_BETA" ]]; then
+        return 1
+    fi
+
     # Manifest unreachable or channel key not found: fall through to GitHub API fallback
 
     # --- GitHub API path (for "latest" channel and fallback) ---
@@ -282,11 +301,13 @@ fetch_latest_version() {
             "${GITHUB_API}/releases?per_page=10" 2>/dev/null) || response=""
 
         if [[ -n "$response" ]]; then
-            # If current version is alpha, prefer alpha tags
+            # If current version is a prerelease channel, prefer same-channel tags.
             if [[ "$current_version" == *"-alpha."* ]]; then
                 tag=$(echo "$response" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*-alpha\.[^"]*"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+            elif [[ "$current_version" == *"-beta."* ]]; then
+                tag=$(echo "$response" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*-beta\.[^"]*"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
             fi
-            # If no alpha match or not alpha, take first tag
+            # If no same-channel match (or a stable current), take first tag
             if [[ -z "$tag" ]]; then
                 tag=$(echo "$response" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
             fi

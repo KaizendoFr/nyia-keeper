@@ -28,6 +28,8 @@ The built-in exclusion list covers several categories of sensitive content:
 
 The full list is defined in `lib/mount-exclusions.sh` (functions `get_exclusion_patterns()`, `get_exclusion_dirs()`, `get_shallow_exclusion_dirs()`, and `get_exclusion_path_patterns()`).
 
+> **Note:** the defaults exclude only genuinely sensitive files. Some ops-config filenames that merely *reference* secrets rather than contain them — `nginx.conf`, `config.yaml`, `.travis.yml`, `go.sum`, `ansible.cfg`, `docker-compose.override.yml` — are **not** excluded by default, so you can edit them normally; the certs/keys they reference stay excluded via `*.pem`/`*.key`/`*.crt`. If your project keeps a secret in one of these, re-add it with a custom exclusion (below).
+
 ## Custom Exclusions
 
 Add your own exclusion patterns in `.nyiakeeper/exclusions.conf` at the root of your project:

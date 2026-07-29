@@ -26,47 +26,77 @@ _update_cmds_lib="$script_dir/../lib/nyiakeeper/update-commands.sh"
 
 # === DISPATCHER COMMANDS ===
 list_available_assistants() {
+    local mode="${1:-enhanced}"
+
+    # Defensive: guarantee the sanitizer exists even if input-validation.sh
+    # failed to source, so `set -e` never aborts on an undefined function.
+    if ! declare -F sanitize_terminal_field >/dev/null 2>&1; then
+        sanitize_terminal_field() { local s; s=$(printf '%s' "$1" | LC_ALL=C tr -d '\000-\037\177'); printf '%s' "${s:0:${2:-64}}"; }
+    fi
+
     echo "Available Nyia Keeper Assistants:"
     echo ""
-    
+
     local found_any=false
-    
-    # Check all potential assistants (both states)
+
     for config_file in "$CONFIG_DIR"/*.conf.example "$CONFIG_DIR"/*.conf; do
-        if [[ -f "$config_file" ]]; then
-            found_any=true
-            
-            # Determine state and display accordingly
-            local base_name=""
-            local status_icon=""
-            local status_text=""
-            
-            if [[ "$config_file" == *.conf.example ]]; then
-                base_name=$(basename "$config_file" .conf.example)
-                # Skip if .conf version exists (configured takes precedence)
-                [[ -f "$CONFIG_DIR/${base_name}.conf" ]] && continue
-                
-                status_icon="⚙️ "
-                status_text="(needs configuration)"
-            else
-                base_name=$(basename "$config_file" .conf)
-                status_icon="✅ "
-                status_text="(ready)"
-            fi
-            
-            printf "  %s%-12s %s\n" "$status_icon" "$base_name" "$status_text"
+        [[ -f "$config_file" ]] || continue
+
+        local base_name="" status_word="" status_text=""
+
+        if [[ "$config_file" == *.conf.example ]]; then
+            base_name=$(basename "$config_file" .conf.example)
+            # Configured .conf takes precedence over its .conf.example
+            [[ -f "$CONFIG_DIR/${base_name}.conf" ]] && continue
+            status_word="needs configuration"
+            status_text="(needs configuration)"
+        else
+            base_name=$(basename "$config_file" .conf)
+            status_word="ready"
+            status_text="(ready)"
         fi
-    done
-    
-    if [[ "$found_any" == "false" ]]; then
-        echo "  No assistants found in: $CONFIG_DIR"
+
+        # Reset EVERY sourced field to stop value leakage between configs
+        unset ASSISTANT_NAME ASSISTANT_CLI ASSISTANT_DISPLAY_NAME \
+              ASSISTANT_FULL_NAME ASSISTANT_PROVIDER ASSISTANT_DESCRIPTION \
+              DESCRIPTION BASE_IMAGE_NAME
+        source "$config_file" 2>/dev/null || continue
+
+        # Only real assistants have an identity (excludes nyia / network-allow)
+        [[ -n "${ASSISTANT_NAME:-}" ]] || continue
+        found_any=true
+
+        if [[ "$mode" == "compact" ]]; then
+            printf '  %-12s %s\n' "$base_name" "$status_text"
+            continue
+        fi
+
+        # --- enhanced (default): ASCII-sanitized, capped; omit empty fields ---
+        local display
+        display=$(sanitize_terminal_field "${ASSISTANT_DISPLAY_NAME:-$ASSISTANT_NAME}" 64)
+        printf '  %s [%s]\n' "$display" "$status_word"
+        if [[ -n "${ASSISTANT_PROVIDER:-}" ]]; then
+            printf '    %-12s %s\n' "Provider:" "$(sanitize_terminal_field "$ASSISTANT_PROVIDER" 64)"
+        fi
+        printf '    %-12s %s\n' "Command:" "nyia-${base_name}"
+        if [[ -n "${ASSISTANT_DESCRIPTION:-}" ]]; then
+            printf '    %-12s %s\n' "Description:" "$(sanitize_terminal_field "$ASSISTANT_DESCRIPTION" 160)"
+        fi
         echo ""
-        echo "To get started:"
-        echo "  1. Run installation: curl -fsSL https://github.com/KaizendoFr/nyia-keeper/releases/latest/download/install.sh | bash"
-        echo "  2. Configure assistant: nyia-claude --help"
+    done
+
+    if [[ "$found_any" == "false" ]]; then
+        echo "  No assistants found."
+        echo ""
+        echo "Expected location: $CONFIG_DIR/"
     fi
-    
+
+    echo "Usage:"
+    echo "  nyia-<assistant> [options]            # Direct assistant access"
     echo ""
+    echo "Configuration:"
+    echo "  Default configs auto-generated on first run"
+    echo "  Customize: edit ~/.config/nyiakeeper/config/<assistant>.conf"
 }
 
 show_config_list() {
@@ -147,7 +177,7 @@ show_global_status() {
     echo "  Git: $(command -v git >/dev/null && echo "✅ Available" || echo "❌ Not found")"
     echo ""
     
-    list_available_assistants
+    list_available_assistants "compact"
     
     # Show data storage info
     echo "Data Storage:"
@@ -259,7 +289,19 @@ case "${1:-help}" in
         esac
         ;;
     list)
-        list_available_assistants
+        shift  # drop 'list'
+        _list_mode="enhanced"
+        for _list_arg in "$@"; do
+            case "$_list_arg" in
+                --compact) _list_mode="compact" ;;
+                *)
+                    echo "Error: Unknown option for 'list': $_list_arg" >&2
+                    echo "Usage: nyia list [--compact]" >&2
+                    exit 1
+                    ;;
+            esac
+        done
+        list_available_assistants "$_list_mode"
         ;;
     status)
         show_global_status

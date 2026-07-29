@@ -77,6 +77,13 @@ _nyia() {
         update)
             if [[ "$cword" -eq 2 ]]; then
                 COMPREPLY=($(compgen -W "status list check install rollback help" -- "$cur"))
+            elif [[ "$cword" -eq 3 && "${words[2]}" == "install" ]]; then
+                # `nyia update install <channel>` — channel aliases.
+                # "beta" is a peer of "alpha"/"latest"; it is offered here even
+                # before the first beta release is cut (the updater fails closed
+                # with a clear message when the manifest has no beta entry).
+                # A literal version tag is also valid but is not statically completable.
+                COMPREPLY=($(compgen -W "latest alpha beta" -- "$cur"))
             fi
             ;;
         completions)

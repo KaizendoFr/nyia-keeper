@@ -1,6 +1,6 @@
 site_name: Nyia Keeper
 site_description: Multi-Assistant AI on a leash — run Claude, Gemini, Codex, OpenCode & Vibe in safe, dockerized dev environments.
-site_url: https://kaizendofr.github.io/nyia-keeper/
+site_url: https://nyia-keeper.com/
 # Published from the PUBLIC repo (where end users go + where docs/ sync to). The header
 # repo link points at the public project; no edit_uri (the public docs/ is a synced mirror
 # — edits happen in the source repo, not here).
@@ -53,6 +53,7 @@ nav:
   - Home: index.md
   - Getting Started:
       - Quick Start: QUICKSTART.md
+      - Requirements: REQUIREMENTS.md
       - Installation: INSTALLATION.md
       - Choosing an Assistant: CHOOSING_AN_ASSISTANT.md
   - Features:

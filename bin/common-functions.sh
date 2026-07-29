@@ -395,6 +395,25 @@ repair_config() {
     done
 }
 
+# Strip assistant fields a prior buggy repair_config wrongly appended to a NON-assistant config
+# (e.g. network-allow.conf) — those lines break the egress allowlist parser (proto host port). (Plan 300)
+_strip_assistant_pollution() {
+    local f="$1"
+    [[ -f "$f" && -w "$f" ]] || return 0
+    grep -qE '^(ASSISTANT_NAME|ASSISTANT_CLI|BASE_IMAGE_NAME|DOCKERFILE_PATH|CONTEXT_DIR_NAME)=' "$f" || return 0
+    local tmp rc
+    tmp="$(mktemp)" || return 0
+    # grep -v exits 1 when EVERY line matched (all-pollution file -> empty result), which is still a
+    # valid cleaned file; only exit >=2 is a real error. Written as an &&/|| list so `set -e` doesn't
+    # abort on exit 1. (Plan 300 / code-review SF-2)
+    grep -vE '^(ASSISTANT_NAME|ASSISTANT_CLI|BASE_IMAGE_NAME|DOCKERFILE_PATH|CONTEXT_DIR_NAME)=' "$f" > "$tmp" && rc=0 || rc=$?
+    if [[ "$rc" -le 1 ]]; then
+        mv "$tmp" "$f"
+    else
+        rm -f "$tmp"
+    fi
+}
+
 # Auto-generate assistant config files from examples
 generate_default_assistant_configs() {
     local user_config_dir="$1"
@@ -408,8 +427,9 @@ generate_default_assistant_configs() {
     for conf_file in "$project_config_dir"/*.conf.example; do
         if [[ -f "$conf_file" ]]; then
             local assistant_name=$(basename "$conf_file" .conf.example)
-            # Skip global config — nyia.conf.example is not an assistant
-            [[ "$assistant_name" == "nyia" ]] && continue
+            # Skip non-assistant configs (nyia global, network-allow egress, …): an example is an
+            # assistant config iff it declares ASSISTANT_CLI= (Plan 300).
+            grep -qE '^ASSISTANT_CLI=' "$conf_file" || continue
             local assistant_dir="$user_config_dir/$assistant_name"
             ensure_directory_exists "$assistant_dir"
         fi
@@ -434,9 +454,11 @@ generate_default_assistant_configs() {
                 if [[ "$VERBOSE" == "true" ]]; then
                     print_info "Generated new config: ${base_name}.conf"
                 fi
-            elif [[ "$base_name" == "nyia" ]]; then
-                # Global config — skip assistant-specific validation/repair
-                :
+            elif ! grep -qE '^ASSISTANT_CLI=' "$example_file"; then
+                # Non-assistant config (nyia global, network-allow egress): generated above if
+                # missing, never assistant-validated/repaired. Strip any pollution a prior buggy
+                # repair injected into network-allow.conf (breaks the egress parser). (Plan 300)
+                [[ "$base_name" == "network-allow" ]] && _strip_assistant_pollution "$target_file"
             elif ! validate_config "$target_file"; then
                 # Repair existing broken config
                 repair_config "$target_file" "$example_file" "$base_name"
@@ -490,28 +512,45 @@ ensure_project_prompts_directory() {
 #
 # Only appends, never removes lines. Safe to call multiple times (dedup per entry).
 # Creates .gitignore if it does not exist.
+# NYIA_TEMP_GITIGNORE_MIGRATION — TEMPORARY self-heal (Plan 309; REMOVE-AFTER colleagues migrate).
+# A legacy whole-directory `.nyiakeeper/` / `/.nyiakeeper/` line fully excludes the dir, and per git's
+# "cannot re-include under a fully-excluded parent" rule it SILENTLY defeats the shared/ re-include.
+# Rewrite that exact line to `/.nyiakeeper/*` so the re-includes work. Conservative: touches ONLY that
+# line, removes nothing else, idempotent (won't match once already `/.nyiakeeper/*`).
+migrate_legacy_nyia_gitignore() {
+    local project_path="$1"
+    local gitignore="$project_path/.gitignore"
+    [[ -f "$gitignore" ]] || return 0
+    if grep -qE '^/?\.nyiakeeper/$' "$gitignore" 2>/dev/null; then
+        local tmp; tmp=$(mktemp) || return 0
+        if sed -E 's#^/?\.nyiakeeper/$#/.nyiakeeper/*#' "$gitignore" > "$tmp" 2>/dev/null; then
+            mv "$tmp" "$gitignore" && print_status "Repaired legacy '.nyiakeeper/' .gitignore rule -> '/.nyiakeeper/*' so shared/ can be committed (Plan 309)"
+        else
+            rm -f "$tmp"
+        fi
+    fi
+}
+
 ensure_nyia_gitignore() {
     local project_path="$1"
     local gitignore="$project_path/.gitignore"
 
-    # Selective ignore contract: private/session/runtime only.
-    # Intentionally ignores top-level assistant runtime dirs (.claude/ etc.) because
-    # these contain credentials, session state, and ephemeral config that should never
-    # be committed. This is a conscious trade-off — if a user has an unrelated .claude/
-    # directory, it will be ignored. Assistant runtime dirs are not project artifacts.
+    # Self-heal a legacy whole-dir exclusion first so the re-includes below can take effect (Plan 309).
+    # Guarded so partial sourcing (unit tests extracting only this fn) never crashes under set -e.
+    declare -F migrate_legacy_nyia_gitignore >/dev/null 2>&1 && migrate_legacy_nyia_gitignore "$project_path"
+
+    # Deny-all-contents + re-include ONLY the shareable team paths (Plan 309). Deny-all (rather than a
+    # selective allow-list) so machine-specific junk under .nyiakeeper/ — caches, vector-db, assistant
+    # config dirs, analysis/session notes — is never accidentally committed. Order matters: the deny-all
+    # precedes its re-includes; the whatsup/.seen.json re-ignore follows the whatsup/ re-include.
     local entries=(
-        # Nyia private/session files
-        ".nyiakeeper/private/"
-        ".nyiakeeper/plans/"
-        ".nyiakeeper/todo.md"
-        ".nyiakeeper/*/context.md"
-        # NOTE: workspace.conf intentionally NOT gitignored — it's shareable team config
-        ".nyiakeeper/.excluded-files.cache"
-        ".nyiakeeper/dev-tools/"
-        ".nyiakeeper/creds/"
-        # Derived shallow .git for the history-cutoff feature (Plan 278) — local, machine-specific
-        ".nyiakeeper/git-shallow/"
-        # Assistant runtime dirs (credentials, session state, ephemeral config)
+        "/.nyiakeeper/*"
+        "!/.nyiakeeper/shared/"
+        "!/.nyiakeeper/exclusions.conf"
+        "!/.nyiakeeper/workspace.conf"
+        "!/.nyiakeeper/whatsup/"
+        "/.nyiakeeper/whatsup/.seen.json"
+        # Assistant runtime dirs live OUTSIDE .nyiakeeper/ (credentials, session state) — ignore separately
         ".claude/"
         ".codex/"
         ".gemini/"
@@ -1985,6 +2024,7 @@ check_git_repository() {
         print_fix "  git init"
         print_fix "  git add ."
         print_fix "  git commit -m 'Initial commit before AI assistance'"
+        print_info "Or bypass with --skip-checks (you lose the Git safety net)."
         return 1
     fi
     return 0
@@ -2011,13 +2051,12 @@ check_docker_available() {
 
 check_docker_running() {
     if ! docker info >/dev/null 2>&1; then
-        print_error "Docker daemon not running"
+        print_error "Cannot connect to the Docker daemon (not running, or permission denied)"
         print_fix "Start Docker daemon:"
-        print_fix "  sudo systemctl start docker"
-        print_fix "  # Or: sudo service docker start"
-        print_warning "You may need to add yourself to docker group:"
+        print_fix "  sudo systemctl start docker    # or: sudo service docker start"
+        print_warning "If Docker IS running, your user may not be in the 'docker' group:"
         print_fix "  sudo usermod -aG docker \$USER"
-        print_fix "  # Then logout and login again"
+        print_fix "  # then log out and back in (or run: newgrp docker)"
         return 1
     fi
     return 0
@@ -2111,7 +2150,13 @@ check_requirements_fast() {
     if [[ "$workspace_mode" != "true" ]] || [[ "${WORKSPACE_ROOT_IS_GIT:-false}" == "true" ]]; then
         check_git_repository || exit_code=1
     fi
-    check_docker_available || exit_code=1
+    # Docker must be installed AND the daemon reachable (Plan 294). Without this, a
+    # permission/daemon failure surfaces later as a misleading "image not found".
+    if check_docker_available; then
+        check_docker_running || exit_code=1
+    else
+        exit_code=1
+    fi
     check_directory_permissions "$project_path" || exit_code=1
 
     # Warnings (don't fail)
@@ -2133,15 +2178,9 @@ check_requirements_full() {
 
     print_status "Running comprehensive requirements check..."
 
-    # Run fast checks first
+    # Run fast checks first (now includes the Docker daemon reachability check, Plan 294)
     check_requirements_fast "$project_path" "$workspace_mode" || exit_code=1
-    
-    # Additional expensive checks
-    if [[ $exit_code -eq 0 ]]; then
-        print_status "Checking Docker daemon..."
-        check_docker_running || exit_code=1
-    fi
-    
+
     if [[ $exit_code -eq 0 ]]; then
         print_success "All requirements satisfied ✓"
     else
@@ -2608,8 +2647,9 @@ get_creds_env_args() {
         fi
         print_verbose "Loading environment variables from $creds_file"
         
-        # Parse .creds/env and pass all exported variables
-        while IFS= read -r line; do
+        # Parse .creds/env and pass all exported variables (|| [[ -n ]] handles a missing final newline)
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            line="${line%$'\r'}"        # tolerate CRLF (WSL2 / Windows editors)
             # Skip comments and empty lines
             [[ "$line" =~ ^[[:space:]]*# ]] && continue
             [[ -z "${line// }" ]] && continue
@@ -2618,6 +2658,14 @@ get_creds_env_args() {
             if [[ "$line" =~ ^[[:space:]]*export[[:space:]]+([A-Z_][A-Z0-9_]*)=(.*)$ ]]; then
                 local var_name="${BASH_REMATCH[1]}"
                 local var_value="${BASH_REMATCH[2]}"
+
+                # DEFAULT-DENY (Plan 310): a project's creds/env is untrusted; only credential-shaped
+                # names may reach the container. Rejects LD_PRELOAD/NODE_OPTIONS/PATH/NYIA_*/... .
+                if ! is_allowed_creds_var "$var_name"; then
+                    # stderr: this fn's stdout is its return value (consumed via process-sub)
+                    print_warning "Ignoring non-credential variable '${var_name}' from ${creds_file} (not passed to the container)" >&2
+                    continue
+                fi
 
                 # Remove surrounding quotes if present
                 var_value="${var_value#\"}"
@@ -2660,9 +2708,20 @@ create_docker_env_file() {
         return 1
     fi
     
-    # Note: Cleanup handled by calling function to avoid nested trap issues
-    # The calling functions (run_docker_container, run_debug_shell) set up cleanup
-    
+    # Fail-closed secrets hygiene (Plan 305): every caller invokes us via $(...), so this
+    # EXIT trap is LOCAL to that command-substitution subshell and never collides with the
+    # caller's own cleanup_env_file trap. The concrete orphan it closes is the explicit
+    # `return 1` on the config-resolve failure below (after credentials are written) — an
+    # explicit return fires EXIT even inside $(...), which previously left the secret-bearing
+    # temp behind. NB: with default bash, `set -e` is INERT inside command substitution (no
+    # `inherit_errexit` set anywhere here), so the later config-source / awk / mv failures do
+    # NOT currently abort the subshell; the trap is nonetheless armed over every early-exit
+    # path as defense-in-depth and would still hold if inherit_errexit were ever enabled.
+    # $temp_script/$temp_sorted are declared later; unset expands to empty here (no set -u),
+    # so the trap is safe throughout. Disarmed on the success path just before we echo the
+    # name, so the caller keeps the file.
+    trap 'rm -f "$env_file" "$temp_script" "$temp_sorted" 2>/dev/null' EXIT
+
     print_verbose "Creating Docker environment file (secure): $env_file"
     
     # Add credentials from creds/env file (private path first, legacy fallback)
@@ -2772,6 +2831,7 @@ EOF
         done < "$env_file"
     fi
     
+    trap - EXIT   # success: hand the secrets file off to the caller (Plan 305)
     echo "$env_file"
 }
 
@@ -3297,12 +3357,26 @@ run_debug_shell() {
     print_verbose "Image: $full_image_name"
     print_verbose "Bypassing git-entrypoint for direct shell access"
 
+    # Secrets env-file cleanup — DEFINED EARLY so every bail-out below (egress refusal,
+    # git-history cutoff, restrict-local) can call it; a no-op while env_file is empty
+    # because [[ -f "" ]] is false. Plan 305: mirrors the Plan 292 hoist in
+    # run_docker_container. Previously the def sat ~40 lines below its first call, and the
+    # only reason no "command not found" surfaced was the `2>/dev/null || true` mask below.
+    local env_file=""
+    cleanup_env_file() {
+        [[ -f "$env_file" ]] && {
+            rm -f "$env_file" 2>/dev/null || true
+            print_verbose "Cleaned up env file: $env_file"
+        }
+    }
+    trap cleanup_env_file EXIT INT TERM QUIT  # Handle more signals
+
     # The debug shell overrides the entrypoint with bash, so the egress image's root-init
     # (which would drop privileges) never runs — an egress image here = a ROOT shell on
     # Docker Desktop. Refuse any egress-hardened image outright. (Plan 283 M4)
     if is_egress_hardened_image "$full_image_name"; then
         print_error "Debug shell cannot run an egress-hardened image (it would bypass the firewall + run as root)."
-        cleanup_env_file 2>/dev/null || true
+        cleanup_env_file
         return 1
     fi
 
@@ -3332,19 +3406,17 @@ run_debug_shell() {
         docker_env_args+=(-e NYIA_WORKSPACE_ROOT_IS_GIT="${WORKSPACE_ROOT_IS_GIT:-false}")
     fi
 
-    # Create environment file for Docker
-    local env_file=$(create_docker_env_file "$project_path" "$assistant_cli")
+    # Create environment file for Docker — fail-closed under set -e (Plan 305): a
+    # `local env_file=$(…)` would MASK a create_docker_env_file failure (a local
+    # assignment always returns 0). cleanup_env_file + trap are already defined at the
+    # top of this function, so a bail-out here shreds any partial secrets temp.
+    if ! env_file=$(create_docker_env_file "$project_path" "$assistant_cli"); then
+        print_error "Failed to create secure environment file for debug shell"
+        cleanup_env_file
+        return 1
+    fi
     docker_env_args+=("--env-file" "$env_file")
-    
-    # Enhanced cleanup function for environment file (security)
-    cleanup_env_file() {
-        [[ -f "$env_file" ]] && { 
-            rm -f "$env_file" 2>/dev/null || true
-            print_verbose "Cleaned up env file: $env_file"
-        }
-    }
-    trap cleanup_env_file EXIT INT TERM QUIT  # Handle more signals
-    
+
     # Get volume arguments (workspace mode or standard exclusions)
     if declare -f get_workspace_volume_args >/dev/null 2>&1; then
         get_workspace_volume_args "$project_path" "$container_path"
@@ -3585,6 +3657,18 @@ run_docker_container() {
         docker_env_args+=(-e NYIA_AGENT="${NYIA_AGENT}")
     fi
 
+    # Secrets env-file cleanup (Plan 292): defined up-front so every bail-out below
+    # (egress gates, git-history cutoff, config-dir check) can call it before the file
+    # even exists -- a no-op while env_file is empty, since [[ -f "" ]] is false.
+    local env_file=""
+    cleanup_env_file() {
+        [[ -f "$env_file" ]] && {
+            rm -f "$env_file" 2>/dev/null || true
+            print_verbose "Cleaned up env file: $env_file"
+        }
+    }
+    trap cleanup_env_file EXIT INT TERM QUIT  # Handle more signals
+
     # Resolve and pass command approval mode to container (Plan 145)
     # Source command-policy on demand — candidate probing (dev source → installed layout)
     local _policy_lib=""
@@ -3600,6 +3684,18 @@ run_docker_container() {
         resolve_and_export_command_mode "$assistant_cli" "$project_path"
         docker_env_args+=(-e NYIA_COMMAND_MODE="${NYIA_COMMAND_MODE}")
         docker_env_args+=(-e NYIA_COMMAND_MODE_SOURCE="${NYIA_COMMAND_MODE_SOURCE}")
+        # Full mode: also neutralize each CLI's OWN internal sandbox / trust gate — the Nyia
+        # container already isolates, and "bypass approvals" vs "disable internal sandbox" are
+        # separate layers each vendor says to set together when containerized (Plan 244). ENV-only
+        # (ignored by CLIs/versions that don't use them → version-safe), and gated on full mode so
+        # safe/ask keep the CLI's native prompts. Codex is already covered by
+        # --security-opt seccomp=unconfined + --yolo (set elsewhere), so nothing to add for it.
+        if [[ "${NYIA_COMMAND_MODE:-}" == "full" ]]; then
+            case "$assistant_cli" in
+                claude) docker_env_args+=(-e IS_SANDBOX=1) ;;                    # allow bypass as root / skip the one-time accept dialog
+                gemini) docker_env_args+=(-e GEMINI_CLI_TRUST_WORKSPACE=true) ;; # skip the separate folder-trust prompt
+            esac
+        fi
         print_verbose "Command mode: ${NYIA_COMMAND_MODE} (source: ${NYIA_COMMAND_MODE_SOURCE})"
 
         # Resolve RAG model from config precedence (Plan 252)
@@ -3698,18 +3794,15 @@ run_docker_container() {
         docker_env_args+=(-e NYIA_WORKSPACE_ROOT_IS_GIT="${WORKSPACE_ROOT_IS_GIT:-false}")
     fi
 
-    # Create environment file for Docker
-    local env_file=$(create_docker_env_file "$project_path" "$assistant_cli")
+    # Create environment file for Docker (secrets). Fail-closed: under `set -e` a bare
+    # env_file=$(...) would abort silently and `local env_file=$(...)` would MASK the
+    # failure, so check explicitly, clean up, and refuse to launch on error (Plan 292).
+    if ! env_file=$(create_docker_env_file "$project_path" "$assistant_cli"); then
+        print_error "Failed to create secure environment file for launch"
+        cleanup_env_file
+        return 1
+    fi
     docker_env_args+=("--env-file" "$env_file")
-    
-    # Enhanced cleanup function for environment file (security)
-    cleanup_env_file() {
-        [[ -f "$env_file" ]] && { 
-            rm -f "$env_file" 2>/dev/null || true
-            print_verbose "Cleaned up env file: $env_file"
-        }
-    }
-    trap cleanup_env_file EXIT INT TERM QUIT  # Handle more signals
     
     # Get volume arguments (workspace mode or standard exclusions)
     if declare -f get_workspace_volume_args >/dev/null 2>&1; then
@@ -3762,6 +3855,7 @@ run_docker_container() {
     if [[ ! -w "$global_config_dir" ]]; then
         print_error "Config directory not writable: $global_config_dir"
         print_info "Fix with: sudo chown -R $(id -u):$(id -g) $global_config_dir"
+        cleanup_env_file  # secrets env-file already created above; shred before bailing (Plan 292)
         return 1
     fi
     print_verbose "Mount verification: $global_config_dir -> /home/node/.${assistant_cli} (OK)"
@@ -3798,7 +3892,19 @@ run_docker_container() {
         print_verbose "Relaxed seccomp for codex bubblewrap sandbox"
     fi
 
-    docker run -it --rm \
+    # E2E harness support (Plan 302b): forward an operator-set NYIA_E2E_EXEC into the container.
+    # This is INERT on published images — they carry no hook that reads it (Plan 302b reverted the
+    # 302a seam). It only does anything against a LOCAL test overlay (tests/e2e/overlay/) whose
+    # provider shim reads it. Host-operator-ONLY: a project cannot set it (Plan 310's creds allowlist
+    # rejects NYIA_*), so it stays unreachable by untrusted repos even on the overlay image.
+    [[ -n "${NYIA_E2E_EXEC:-}" ]] && docker_env_args+=(-e NYIA_E2E_EXEC="$NYIA_E2E_EXEC")
+
+    # Only allocate a TTY when one actually exists — a non-interactive harness / CI has none, and
+    # `docker run -t` there fails with "the input device is not a TTY". Interactive use still gets -it.
+    local tty_args=(-i)
+    [[ -t 0 && -t 1 ]] && tty_args=(-it)
+
+    docker run "${tty_args[@]}" --rm \
         $(get_docker_network_args) \
         $(get_docker_user_args) \
         $(get_egress_security_args) \
@@ -4010,6 +4116,15 @@ login_assistant() {
     if is_egress_hardened_image "$full_image_name"; then
         print_error "Login cannot use an egress-hardened image (it would bypass the firewall + run as root)."
         exit 1
+    fi
+
+    # A local dev image (nyiakeeper/<name>:dev-<branch>) is only produced by @DEV_BUILD; it
+    # can be stale relative to the current branch state, with no other signal that login is
+    # running against it. Advisory only — never blocks, never changes which image is used, and
+    # is naturally inert in the runtime edition (which always resolves a registry :<version>
+    # tag). Prints only the image tag, never a secret. (Plan 305 / 275 hygiene)
+    if [[ "$full_image_name" == *:dev-* ]]; then
+        print_warning "Login is using local dev image '$full_image_name' — it may be stale; rebuild with --build if auth behaves unexpectedly."
     fi
 
     # Check if the selected image exists (with registry pull retry on inspect failure)

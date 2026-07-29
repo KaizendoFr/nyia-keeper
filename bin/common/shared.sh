@@ -747,8 +747,19 @@ _resolve_host_channel() {
         _installed_ver=$(_resolve_host_version)
         if [[ "$_installed_ver" == *-alpha.* ]]; then
             channel="alpha"
+        elif [[ "$_installed_ver" == *-beta.* ]]; then
+            channel="beta"
         fi
     fi
+
+    # Normalize case so channel matching stays consistent with the container-side
+    # compat guard (docker/shared/version-compat.sh), which lowercases the channel.
+    # Canonical channels are lowercase, so this is a no-op for the normal
+    # alpha/beta/latest values; it only affects a mixed-case env var or CHANNEL
+    # state file (e.g. NYIA_CHANNEL=Beta). Without it such a value would fall
+    # through _get_runtime_image_tag's case to :latest while the guard treated the
+    # host as beta — a resolver/guard divergence.
+    channel="$(printf '%s' "$channel" | tr '[:upper:]' '[:lower:]')"
 
     printf '%s' "$channel"
 }
@@ -757,6 +768,7 @@ _resolve_host_channel() {
 # Channel model (Plan 192):
 #   - NYIA_IMAGE_TAG env var: explicit override (highest priority)
 #   - NYIA_CHANNEL=alpha     -> use :alpha tag (manually promoted channel)
+#   - NYIA_CHANNEL=beta      -> use :beta tag (manually promoted channel)
 #   - NYIA_CHANNEL=latest    -> use :latest tag (newest published)
 #   - default                -> :latest (same as "latest" channel)
 # This function does NOT apply to local dev builds (handled by get_docker_registry).
@@ -773,6 +785,7 @@ _get_runtime_image_tag() {
 
     case "${channel:-latest}" in
         alpha)   echo "alpha" ;;
+        beta)    echo "beta" ;;
         latest)  echo "latest" ;;
         *)       echo "latest" ;;  # unknown channel defaults to latest
     esac

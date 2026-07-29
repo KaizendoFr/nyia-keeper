@@ -24,14 +24,74 @@ PUBLIC_REPO="KaizendoFr/nyia-keeper"
 TARBALL_NAME="nyiakeeper-runtime.tar.gz"
 MIN_MACOS_VERSION="13"
 # Replaced at build time by preprocess-runtime.sh (same pattern as install.sh)
-RELEASE_TAG="v0.1.0-alpha.103"
+RELEASE_TAG="v0.1.0-beta.1"
 
-# Version resolution: $1 > $NYIA_VERSION > build-time RELEASE_TAG > "latest"
+# --- Version / Channel resolution ---
+#
+# CHANNEL SUPPORT (Plan 312c): This macOS installer resolves an EXPLICIT release
+# by tag. Unlike the Linux public-install.sh, it does NOT perform channels.json
+# manifest resolution, so a prerelease *channel* (alpha/beta) cannot be
+# auto-resolved to its newest tag here. To install a prerelease on macOS, pin its
+# exact version tag, e.g.:
+#     install-macos.sh v0.1.0-beta.3
+# The stable channel is installable by name (`latest`) because it maps directly
+# to GitHub's /releases/latest.
+#
+# Precedence (highest to lowest), mirroring the documented installer precedence
+# (positional version > NYIA_VERSION > NYIA_CHANNEL > build-time default):
+#   1. Positional argument ($1)  — exact version tag, or a channel name
+#   2. NYIA_VERSION env var       — exact version tag
+#   3. NYIA_CHANNEL env var       — a channel name
+#   4. Build-time RELEASE_TAG / "latest" (newest stable release)
+#
+# FAIL-CLOSED BY ABSENCE (Plan 312a/312c): a prerelease channel request
+# (`alpha`/`beta`) is refused with a clear message and a non-zero exit rather than
+# silently installing the stable `latest` build. Beta in particular must NEVER
+# fall back to latest.
+
+# A channel name may arrive via $1 (highest precedence) or NYIA_CHANNEL (lowest);
+# NYIA_VERSION sits between them and is always an exact version tag.
+REQUESTED_CHANNEL=""
 if [[ -n "${1:-}" ]]; then
-    RELEASE_TAG="$1"
+    if [[ "$1" =~ ^(latest|alpha|beta)$ ]]; then
+        REQUESTED_CHANNEL="$1"
+    else
+        RELEASE_TAG="$1"
+    fi
     shift
 elif [[ -n "${NYIA_VERSION:-}" ]]; then
     RELEASE_TAG="$NYIA_VERSION"
+elif [[ -n "${NYIA_CHANNEL:-}" ]]; then
+    REQUESTED_CHANNEL="$NYIA_CHANNEL"
+fi
+
+# Resolve / validate an explicit channel request.
+if [[ -n "$REQUESTED_CHANNEL" ]]; then
+    case "$REQUESTED_CHANNEL" in
+        latest)
+            # Explicit stable-channel request: force the literal "latest" so the
+            # download hits GitHub's /releases/latest (newest STABLE release).
+            # preprocess-runtime.sh pins ONLY the top-of-file build-default
+            # RELEASE_TAG (its sed stops after the first match), so this line is
+            # intentionally left un-pinned — do NOT collapse it into that default.
+            RELEASE_TAG="latest"
+            ;;
+        alpha|beta)
+            # FAIL CLOSED: this installer cannot manifest-resolve a prerelease
+            # channel to its newest tag. Refuse rather than installing stable.
+            # NOTE: functions like fail() are defined later, so echo directly.
+            echo "" >&2
+            echo "Error: the macOS installer cannot install the '$REQUESTED_CHANNEL' channel by name." >&2
+            echo "       It resolves explicit version tags only (no channel manifest lookup)." >&2
+            echo "       Refusing to fall back to the stable 'latest' release." >&2
+            echo "" >&2
+            echo "       To install a '$REQUESTED_CHANNEL' build on macOS, pin its exact version tag, e.g.:" >&2
+            echo "         curl -fsSL <url>/install-macos.sh | bash -s -- v0.1.0-$REQUESTED_CHANNEL.N" >&2
+            echo "       Browse available tags: https://github.com/$PUBLIC_REPO/releases" >&2
+            echo "" >&2
+            exit 1
+            ;;
+    esac
 fi
 
 #─────────────────────────────────────────────────────────────
@@ -412,6 +472,25 @@ install_nyiakeeper() {
     print_success "Installation complete"
 }
 
+persist_channel_state() {
+    # Persist the update channel inferred from the installed version so the
+    # auto-updater stays on the same channel (mirrors the Linux public-install.sh
+    # CHANNEL state write, Plan 227/312c). Inference matches the CI pipeline:
+    # *-alpha.* -> alpha, *-beta.* -> beta, else -> latest.
+    local channel
+    case "$RELEASE_TAG" in
+        latest)     channel="latest" ;;
+        *-beta.*)   channel="beta" ;;
+        *-alpha.*)  channel="alpha" ;;
+        *)          channel="latest" ;;
+    esac
+
+    local config_root="${XDG_CONFIG_HOME:-$HOME/.config}/nyiakeeper"
+    mkdir -p "$config_root"
+    echo "$channel" > "$config_root/CHANNEL"
+    print_info "Update channel set to: $channel"
+}
+
 get_login_shell() {
     # Use dscl to get the user's actual login shell (not $SHELL which may differ)
     # This is critical when running via curl | bash where SHELL may be /bin/bash
@@ -483,6 +562,11 @@ ${CYAN}│${NC}                                                          ${CYAN}
 ${CYAN}│${NC}   ${BOLD}First time setup for Claude:${NC}                           ${CYAN}│${NC}
 ${CYAN}│${NC}      ${CYAN}nyia-claude --login${NC}                                 ${CYAN}│${NC}
 ${CYAN}│${NC}                                                          ${CYAN}│${NC}"
+    echo ""
+    echo "Requirements to run:"
+    echo "  • Docker Desktop running"
+    echo "  • Launch inside a Git repo (--skip-checks to bypass)"
+    echo "  • Full requirements & setup: https://nyia-keeper.com"
 }
 
 #─────────────────────────────────────────────────────────────
@@ -552,6 +636,7 @@ main() {
 
     check_existing_install
     install_nyiakeeper
+    persist_channel_state
     configure_path
     print_success_message
 }

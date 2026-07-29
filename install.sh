@@ -43,11 +43,17 @@ CHANNELS_MANIFEST_URL="https://raw.githubusercontent.com/${PUBLIC_REPO}/main/cha
 # Precedence order (highest to lowest):
 #   1. Positional argument: install.sh v0.1.0-alpha.63    (exact version)
 #   2. NYIA_VERSION env var: NYIA_VERSION=v0.1.0-alpha.63 (exact version)
-#   3. NYIA_CHANNEL env var: NYIA_CHANNEL=alpha            (channel manifest lookup)
+#   3. NYIA_CHANNEL env var: NYIA_CHANNEL=beta            (channel manifest lookup)
 #   4. Pipeline placeholder __RELEASE_TAG__ / "latest"    (newest published release)
 #
-# Channel resolution uses the public channels.json manifest hosted in the
-# public runtime repository so GitHub Releases remain immutable.
+# Valid channel names: latest | alpha | beta. Channel resolution uses the public
+# channels.json manifest hosted in the public runtime repository so GitHub
+# Releases remain immutable.
+#
+# FAIL-CLOSED BY ABSENCE (Plan 312a/312c): channels.json has no "beta" key until
+# the first beta release is cut. A `beta` channel request with no resolvable beta
+# tag is refused (non-zero) with a clear message — it NEVER falls back to the
+# stable (latest) channel. alpha/latest keep their existing fallback behavior.
 
 # Detect selected channel (used to write CHANNEL state file after install).
 # Default is "latest" when no explicit channel is chosen.
@@ -62,7 +68,7 @@ if [[ -n "${1:-}" ]]; then
     # Positional argument: treat as explicit version tag
     ARG_VAL="$1"
     # If it looks like a channel name (no dots/digits at start), treat as channel
-    if [[ "$ARG_VAL" =~ ^(latest|alpha)$ ]]; then
+    if [[ "$ARG_VAL" =~ ^(latest|alpha|beta)$ ]]; then
         SELECTED_CHANNEL="$ARG_VAL"
         EXPLICIT_CHANNEL=true
         RELEASE_TYPE="channel:$ARG_VAL"
@@ -107,10 +113,23 @@ if [[ "$RELEASE_TYPE" == channel:* ]]; then
         TAG_NAME=""
     fi
     if [[ -z "$TAG_NAME" ]]; then
+        # FAIL-CLOSED BY ABSENCE (Plan 312a/312c): the beta channel is unavailable
+        # until a beta release is cut and added to channels.json. A beta request we
+        # cannot resolve must NEVER silently install the stable (latest) channel —
+        # refuse with a clear message and a non-zero exit instead.
+        if [[ "$CHANNEL_NAME" == "beta" ]]; then
+            echo "❌ Beta channel is not available yet." >&2
+            echo "   No resolvable 'beta' entry is present in the channel manifest," >&2
+            echo "   or the manifest could not be fetched (a transient network/GitHub error)." >&2
+            echo "   (A beta release must be published before you can install it.)" >&2
+            echo "   Manifest URL: $CHANNELS_MANIFEST_URL" >&2
+            echo "   Refusing to fall back to the stable channel." >&2
+            exit 1
+        fi
         echo "❌ Could not resolve channel '$CHANNEL_NAME' from manifest"
         echo "   Manifest URL: $CHANNELS_MANIFEST_URL"
         echo "   Falling back to newest published release..."
-        RELEASE_TYPE="tags/v0.1.0-alpha.103"
+        RELEASE_TYPE="tags/v0.1.0-beta.1"
     else
         echo "📦 Channel '$CHANNEL_NAME' resolved to: $TAG_NAME"
     fi
@@ -152,13 +171,16 @@ fi
 
 # --- Channel inference from resolved version (Plan 227) ---
 # When no explicit channel was chosen, infer from the version tag pattern.
-# Matches CI pipeline logic: *-alpha.* → alpha channel, else → latest channel.
+# Matches CI pipeline logic: *-alpha.* → alpha, *-beta.* → beta, else → latest.
 if [[ "$EXPLICIT_CHANNEL" == "false" && -n "${TAG_NAME:-}" ]]; then
     if [[ "$TAG_NAME" == *-alpha.* ]]; then
         SELECTED_CHANNEL="alpha"
         echo "📡 Inferred channel 'alpha' from version: $TAG_NAME"
+    elif [[ "$TAG_NAME" == *-beta.* ]]; then
+        SELECTED_CHANNEL="beta"
+        echo "📡 Inferred channel 'beta' from version: $TAG_NAME"
     elif [[ -z "$SELECTED_CHANNEL" ]]; then
-        # Exact-version install of a non-alpha tag — default to latest
+        # Exact-version install of a non-prerelease tag — default to latest
         SELECTED_CHANNEL="latest"
     fi
 fi
@@ -206,3 +228,9 @@ echo "Next steps:"
 echo "1. Add ~/.local/bin to your PATH if not already done"
 echo "2. Run: nyia list"
 echo "3. Configure an assistant: nyia-claude --login"
+echo ""
+echo "Requirements to run:"
+echo "  • Docker running + your user in the 'docker' group"
+echo "      (if not: sudo usermod -aG docker \$USER, then log out/in)"
+echo "  • Git installed; launch inside a Git repo (--skip-checks to bypass)"
+echo "  • Full requirements & per-OS setup: https://nyia-keeper.com"

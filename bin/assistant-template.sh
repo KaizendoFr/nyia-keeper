@@ -348,7 +348,11 @@ WORKSPACE_TEMPLATE
     fi
 
 
-    # Source credentials if available (private path first, legacy fallback)
+    # Load credentials if available (private path first, legacy fallback).
+    # SECURITY (Plan 310): NEVER `source` this file — it lives in the (untrusted) project and a
+    # `source` would execute arbitrary shell ON THE HOST. Instead parse `export NAME=value` lines
+    # literally and export only credential-allowlisted names (is_allowed_creds_var). No eval, no
+    # value expansion, so `$(cmd)` / backticks / `;cmd` in the file never run.
     local creds_file="$PROJECT_PATH/.nyiakeeper/private/creds/env"
     local _using_legacy_creds=false
     if [[ ! -f "$creds_file" ]]; then
@@ -359,8 +363,17 @@ WORKSPACE_TEMPLATE
         if [[ "$_using_legacy_creds" == "true" ]]; then
             print_deprecation ".nyiakeeper/creds/" ".nyiakeeper/private/creds/"
         fi
-        source "$creds_file"
-        print_verbose "Loaded credentials from $creds_file"
+        local _cred_line _cred_name _cred_val
+        while IFS= read -r _cred_line || [[ -n "$_cred_line" ]]; do
+            _cred_line="${_cred_line%$'\r'}"      # tolerate CRLF (WSL2 / Windows editors)
+            [[ "$_cred_line" =~ ^[[:space:]]*export[[:space:]]+([A-Z_][A-Z0-9_]*)=(.*)$ ]] || continue
+            _cred_name="${BASH_REMATCH[1]}"; _cred_val="${BASH_REMATCH[2]}"
+            is_allowed_creds_var "$_cred_name" || { print_warning "Ignoring non-credential variable '${_cred_name}' from ${creds_file}"; continue; }
+            _cred_val="${_cred_val#\"}"; _cred_val="${_cred_val%\"}"
+            _cred_val="${_cred_val#\'}"; _cred_val="${_cred_val%\'}"
+            export "${_cred_name}=${_cred_val}"      # literal assignment — value is never executed
+        done < "$creds_file"
+        print_verbose "Loaded credentials from $creds_file (allowlisted, not sourced)"
     else
         print_verbose "No credentials file found"
     fi

@@ -35,3 +35,9 @@ API_KEY_ENV="GEMINI_API_KEY"  # Google AI Studio API key
 # To use: nyia-gemini --rag
 # Install model: ollama pull nomic-embed-text
 NYIA_RAG_MODEL="nomic-embed-text"
+
+# === DISPLAY METADATA (Plan 35 — shown by `nyia list`) ===
+ASSISTANT_DISPLAY_NAME="Gemini"
+ASSISTANT_FULL_NAME="Gemini CLI"
+ASSISTANT_DESCRIPTION="Google's open-source terminal AI agent, powered by Gemini models"
+ASSISTANT_PROVIDER="Google"
