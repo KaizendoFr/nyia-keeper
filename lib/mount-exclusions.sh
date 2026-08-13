@@ -43,7 +43,7 @@ get_find_case_args() {
 ENABLE_MOUNT_EXCLUSIONS=${ENABLE_MOUNT_EXCLUSIONS:-true}
 
 # Exclusion cache logic version — bump this when exclusion scan logic changes
-EXCL_CACHE_VERSION="3"
+EXCL_CACHE_VERSION="4"
 
 # Compute a cache key combining logic version + exclusions.conf content hash.
 # Returns: "<version>:<cksum_output>" or "<version>:noconf" if no config file.
@@ -249,6 +249,48 @@ get_user_exclusion_file_paths() {
         [[ "$line" == */* ]] || continue
         echo "$line"
     done < "$exclusions_file"
+}
+
+# Built-in (NON-OVERRIDABLE) file-path exclusions — SECURITY (Plan 314).
+# The raw creds/env credential file is parsed HOST-SIDE and forwarded into the
+# container as allow-listed env vars (bin/common-functions.sh get_creds_env_args);
+# no in-container code reads the raw file, so stubbing it is safe defense-in-depth
+# and stops an (untrusted-mesh) reviewer from reading raw secrets in-container.
+# Anchored to the exact `env` files ONLY — deliberately NOT the private/ or creds/
+# subtrees, because .nyiakeeper/private/network-allow.conf (read in-container by the
+# egress firewall) and .nyiakeeper/cli-runner-access/id-runner (sidecar ssh key) are
+# legitimate in-container reads that MUST stay visible. Non-overridable by design so
+# an exclusions.conf `!` re-include cannot re-open the hole.
+get_builtin_exclusion_file_paths() {
+    echo ".nyiakeeper/private/creds/env"
+    echo ".nyiakeeper/creds/env"
+}
+
+# Apply the built-in (non-overridable) file-path exclusions to VOLUME_ARGS.
+# Runs on EVERY launch — deliberately INDEPENDENT of the exclusions cache and of
+# exclusions.conf `!` overrides — so the raw creds/env file is ALWAYS stubbed, even
+# on a cache hit or when a user tries to re-include it. Idempotent: dedups against
+# VOLUME_ARGS so a duplicate `-v` (which docker rejects) is never emitted.
+# $1 = filesystem base path, $2 = container path for that base.
+apply_builtin_file_exclusions() {
+    local base_path="$1"
+    local container_path="$2"
+    local placeholder="/tmp/nyia-excluded-file.txt"
+    local rel spec a found
+    while IFS= read -r rel; do
+        [[ -z "$rel" ]] && continue
+        # Only stub if the real file exists (nothing to hide otherwise; mounting a
+        # placeholder over a container path replaces what the container sees there).
+        [[ -e "$base_path/$rel" ]] || continue
+        spec="$placeholder:$container_path/$rel:ro"
+        found=0
+        for a in "${VOLUME_ARGS[@]}"; do
+            [[ "$a" == "$spec" ]] && { found=1; break; }
+        done
+        [[ $found -eq 1 ]] && continue
+        VOLUME_ARGS+=("-v" "$spec")
+        print_verbose "Excluding file (built-in security): $rel"
+    done < <(get_builtin_exclusion_file_paths)
 }
 
 # Get user-defined directory exclusion patterns that contain path separators.
@@ -665,6 +707,11 @@ create_volume_args() {
     if [[ "$ENABLE_MOUNT_EXCLUSIONS" != "true" ]]; then
         VOLUME_ARGS=("-v" "$project_path:$container_path:rw")
         print_verbose "Mount exclusions disabled, returning simple mount"
+        # SECURITY (Plan 314): the creds/env stub is a HARD floor — applied even
+        # when mount exclusions are otherwise disabled, so raw secrets are never
+        # readable in-container regardless of the exclusions toggle.
+        setup_explanation_files
+        apply_builtin_file_exclusions "$project_path" "$container_path"
         return 0
     fi
     
@@ -1056,6 +1103,11 @@ create_volume_args() {
             print_verbose "Assistant exclusions cache updated"
         fi
     fi
+
+    # SECURITY (Plan 314): built-in creds/env stub — applied on BOTH the cache-hit
+    # and fresh-scan paths, AFTER the branch, so it is independent of the cache and
+    # of any exclusions.conf `!` override (truly non-overridable).
+    apply_builtin_file_exclusions "$project_path" "$container_path"
 }
 
 # Backward compatibility wrapper
@@ -1095,6 +1147,10 @@ append_repo_volume_args() {
     # Skip exclusion scanning if disabled (repo is still mounted above)
     if [[ "$ENABLE_MOUNT_EXCLUSIONS" != "true" ]]; then
         print_verbose "Mount exclusions disabled, skipping repo exclusion scanning"
+        # SECURITY (Plan 314): creds/env stub is a HARD floor — applied even when
+        # exclusions are disabled, for the secondary repo mount too.
+        setup_explanation_files
+        apply_builtin_file_exclusions "$repo_path" "$container_subpath"
         return 0
     fi
 
@@ -1355,4 +1411,7 @@ append_repo_volume_args() {
                 -o -type f \( "${user_file_path_expr[@]}" \) -print0 2>/dev/null)
         fi
     fi
+
+    # === Phase 4c: Built-in (NON-OVERRIDABLE) file-path exclusions — SECURITY (Plan 314) ===
+    apply_builtin_file_exclusions "$repo_path" "$container_subpath"
 }

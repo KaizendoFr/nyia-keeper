@@ -91,6 +91,11 @@ main() {
     debug_args
 
     # Startup update check (runtime only — never blocks assistant launch)
+    # Plan 320: one-time alpha EOL notice (interactive only — the durable marker means once ever).
+    # Gate on stderr (fd 2), where the notice is written, so a stderr redirect suppresses+preserves it.
+    if [[ -t 2 ]]; then
+        type _maybe_show_alpha_eol_notice &>/dev/null && _maybe_show_alpha_eol_notice || true
+    fi
     type check_for_updates_if_due &>/dev/null && check_for_updates_if_due || true
 
     # Set project path if not provided

@@ -761,6 +761,14 @@ _resolve_host_channel() {
     # host as beta — a resolver/guard divergence.
     channel="$(printf '%s' "$channel" | tr '[:upper:]' '[:lower:]')"
 
+    # Plan 320: BETA is the default channel. When there is no explicit channel and the installed
+    # version gave no alpha/beta signal, resolve BETA (auto-migrate legacy no-CHANNEL installs) rather
+    # than falling through to latest. An alpha-version install still resolves alpha above (frozen
+    # bridge), so host channel and image tag stay consistent — no compat mismatch.
+    if [[ -z "$channel" ]]; then
+        channel="beta"
+    fi
+
     printf '%s' "$channel"
 }
 
@@ -783,11 +791,11 @@ _get_runtime_image_tag() {
     local channel
     channel=$(_resolve_host_channel)
 
-    case "${channel:-latest}" in
+    case "${channel:-beta}" in
         alpha)   echo "alpha" ;;
         beta)    echo "beta" ;;
         latest)  echo "latest" ;;
-        *)       echo "latest" ;;  # unknown channel defaults to latest
+        *)       echo "beta" ;;  # Plan 320: unknown/no channel defaults to beta (was latest)
     esac
 }
 

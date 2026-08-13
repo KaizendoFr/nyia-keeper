@@ -2062,6 +2062,18 @@ check_docker_running() {
     return 0
 }
 
+# Single Docker preflight (installed + daemon reachable), reusable by any entry point.
+# CONTRACT (Plan 318): returns non-zero WITHOUT invoking docker when the CLI is absent
+# (check_docker_available uses `command -v`); calls `docker info` exactly once (via
+# check_docker_running) when the CLI is present; emits only the existing friendly messages and
+# never exposes env/credential values; performs NO project checks (git/dir) — safe for both the
+# run-path preflight and the project-agnostic login path.
+ensure_docker_ready() {
+    check_docker_available || return 1
+    check_docker_running || return 1
+    return 0
+}
+
 check_directory_permissions() {
     local project_path="$1"
     
@@ -2152,11 +2164,8 @@ check_requirements_fast() {
     fi
     # Docker must be installed AND the daemon reachable (Plan 294). Without this, a
     # permission/daemon failure surfaces later as a misleading "image not found".
-    if check_docker_available; then
-        check_docker_running || exit_code=1
-    else
-        exit_code=1
-    fi
+    # (Plan 318: same gate is shared with the login path via ensure_docker_ready.)
+    ensure_docker_ready || exit_code=1
     check_directory_permissions "$project_path" || exit_code=1
 
     # Warnings (don't fail)
@@ -4008,6 +4017,16 @@ login_assistant() {
     local auth_method="$5"
     local shell_mode="${6:-false}"
     local docker_image="${7:-}"
+
+    # Plan 318: Docker preflight parity. The --login path exits before check_requirements_fast
+    # (run-path only), so guard here — BEFORE any docker call — or a missing CLI / dead daemon
+    # surfaces as a raw "docker: command not found" + misleading "Failed to pull image" instead of
+    # the friendly install/daemon message. Docker-ONLY (login stays project-agnostic: no git/dir
+    # checks). --skip-checks bypasses (same escape hatch as run); a bypass never fakes success — a
+    # later docker failure still surfaces non-zero.
+    if [[ "${SKIP_CHECKS:-false}" != "true" ]] && ! ensure_docker_ready; then
+        return 1
+    fi
 
     local nyia_home=$(get_nyiakeeper_home)
     # Resolve the auth dir through the active profile (Plan 286). DEFAULT profile

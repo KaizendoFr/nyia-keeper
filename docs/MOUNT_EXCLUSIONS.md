@@ -114,6 +114,23 @@ Override patterns follow the **same anchoring rules** as exclusion patterns:
 - **Root-anchored override** (`!config/credentials.json`): force-includes only at project root.
 - **Explicit anywhere override** (`!**/vendor/`): force-includes at any depth.
 
+## Built-in security exclusions (non-overridable)
+
+A small set of raw secret files is **always** stubbed inside the container and **cannot** be
+force-included with `!`:
+
+- `.nyiakeeper/private/creds/env` (and the legacy `.nyiakeeper/creds/env`)
+
+These hold credentials that Nyia parses **on the host** and forwards into the container as
+allow-listed environment variables — no in-container code reads the raw file — so stubbing it is
+safe defense-in-depth and prevents the raw credential file from being read inside the container
+(for example by an automated reviewer). The stub applies on **every** launch: even with
+`--no-exclusions` / `ENABLE_MOUNT_EXCLUSIONS=false`, on cache hits, and regardless of
+`exclusions.conf` (a `!` re-include does not un-stub it). Files that Nyia genuinely reads
+in-container — `.nyiakeeper/private/network-allow.conf` (egress firewall) and
+`.nyiakeeper/cli-runner-access/id-runner` (sidecar SSH key) — are deliberately **not** stubbed.
+_(Plan 314.)_
+
 ## Workspace Mode
 
 In [workspace mode](WORKSPACE.md), each repository can have its own `exclusions.conf`:

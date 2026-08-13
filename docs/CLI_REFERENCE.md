@@ -354,14 +354,13 @@ Manage Nyia Keeper installation updates and rollbacks.
 
 Nyia Keeper supports three update channels:
 
-- **latest** - Stable releases (default channel)
-- **alpha** - Pre-release builds for early adopters
-- **beta** - Pre-release builds, a peer of `alpha`
+- **beta** - Pre-release builds (**default channel**)
+- **latest** - Stable releases (resolves only once a stable release exists)
+- **alpha** - **Deprecated & frozen** (pinned at `v0.1.0-alpha.103` as a bridge; no new alpha builds)
 
 Switch channels with:
 ```bash
-nyia update install alpha     # Switch to alpha channel
-nyia update install beta      # Switch to beta channel
+nyia update install beta      # Switch to beta channel (default)
 nyia update install latest    # Switch to latest (stable) channel
 ```
 

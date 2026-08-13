@@ -56,8 +56,8 @@ CHANNELS_MANIFEST_URL="https://raw.githubusercontent.com/${PUBLIC_REPO}/main/cha
 # stable (latest) channel. alpha/latest keep their existing fallback behavior.
 
 # Detect selected channel (used to write CHANNEL state file after install).
-# Default is "latest" when no explicit channel is chosen.
-SELECTED_CHANNEL="latest"
+# Default is "beta" when no explicit channel is chosen (Plan 320/321: beta is the default channel).
+SELECTED_CHANNEL="beta"
 # Track whether the user explicitly chose a channel (Plan 227).
 # When false, channel is inferred from the resolved version tag after download.
 EXPLICIT_CHANNEL=false
@@ -90,9 +90,15 @@ elif [[ -n "${NYIA_CHANNEL:-}" ]]; then
     RELEASE_TYPE="channel:$NYIA_CHANNEL"
     echo "📦 Installing channel: $NYIA_CHANNEL"
 else
-    # Pipeline replaces __RELEASE_TAG__ with a specific tag (e.g., tags/v0.1.0-alpha.41)
-    # or "latest" for non-tag builds. If unreplaced, fall through to latest resolution.
+    # Pipeline replaces __RELEASE_TAG__ with a concrete tag for a RELEASE installer. If UNREPLACED
+    # (raw/source install), default to the BETA channel (Plan 320/321). The placeholder in the
+    # comparison is split ("__RELEASE""_TAG__") so the replace step can't rewrite it — only the
+    # assignment above is a real placeholder; a pinned release installer keeps its tag.
     RELEASE_TYPE="__RELEASE_TAG__"
+    if [[ "$RELEASE_TYPE" == "__RELEASE""_TAG__" ]]; then
+        RELEASE_TYPE="channel:beta"
+        SELECTED_CHANNEL="beta"
+    fi
 fi
 
 # Resolve the release tag name for download URL
@@ -129,7 +135,7 @@ if [[ "$RELEASE_TYPE" == channel:* ]]; then
         echo "❌ Could not resolve channel '$CHANNEL_NAME' from manifest"
         echo "   Manifest URL: $CHANNELS_MANIFEST_URL"
         echo "   Falling back to newest published release..."
-        RELEASE_TYPE="tags/v0.1.0-beta.1"
+        RELEASE_TYPE="tags/v0.1.0-beta.2"
     else
         echo "📦 Channel '$CHANNEL_NAME' resolved to: $TAG_NAME"
     fi

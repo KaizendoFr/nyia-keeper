@@ -24,30 +24,60 @@ PUBLIC_REPO="KaizendoFr/nyia-keeper"
 TARBALL_NAME="nyiakeeper-runtime.tar.gz"
 MIN_MACOS_VERSION="13"
 # Replaced at build time by preprocess-runtime.sh (same pattern as install.sh)
-RELEASE_TAG="v0.1.0-beta.1"
+RELEASE_TAG="v0.1.0-beta.2"
 
 # --- Version / Channel resolution ---
 #
-# CHANNEL SUPPORT (Plan 312c): This macOS installer resolves an EXPLICIT release
-# by tag. Unlike the Linux public-install.sh, it does NOT perform channels.json
-# manifest resolution, so a prerelease *channel* (alpha/beta) cannot be
-# auto-resolved to its newest tag here. To install a prerelease on macOS, pin its
-# exact version tag, e.g.:
-#     install-macos.sh v0.1.0-beta.3
-# The stable channel is installable by name (`latest`) because it maps directly
-# to GitHub's /releases/latest.
+# CHANNEL SUPPORT (Plan 312c; Plan 320): This macOS installer does NOT read the
+# channels.json manifest. It resolves the BETA channel (and the DEFAULT) directly
+# via the GitHub /releases API — filtered for real -beta.N tags, ordered by
+# version, with BOTH runtime assets verified (HEAD 200) and FAIL-CLOSED on
+# none/unverifiable/network (see _resolve_newest_beta). The stable channel
+# (`latest`) maps to GitHub's /releases/latest. An exact version tag pins that tag.
 #
 # Precedence (highest to lowest), mirroring the documented installer precedence
-# (positional version > NYIA_VERSION > NYIA_CHANNEL > build-time default):
+# (positional version > NYIA_VERSION > NYIA_CHANNEL > build-time default = beta):
 #   1. Positional argument ($1)  — exact version tag, or a channel name
 #   2. NYIA_VERSION env var       — exact version tag
 #   3. NYIA_CHANNEL env var       — a channel name
-#   4. Build-time RELEASE_TAG / "latest" (newest stable release)
+#   4. Build-time RELEASE_TAG (pinned for a release installer) / default = BETA
 #
-# FAIL-CLOSED BY ABSENCE (Plan 312a/312c): a prerelease channel request
-# (`alpha`/`beta`) is refused with a clear message and a non-zero exit rather than
-# silently installing the stable `latest` build. Beta in particular must NEVER
-# fall back to latest.
+# Plan 320: ALPHA is deprecated and FROZEN — `alpha` by name is refused. BETA is
+# the default and resolves safely (never a silent stable/alpha/draft fallback).
+
+# Plan 320: resolve the NEWEST beta tag SAFELY. macOS has no channels.json lookup, so we query
+# /releases directly — but we FILTER for real -beta.N tags, order by the numeric suffix, VERIFY both
+# runtime assets exist (HEAD 200), and FAIL CLOSED on none/unverifiable/network. Never returns an
+# alpha/stable/draft, and never silently installs the wrong thing (codex 320-review High #4).
+_resolve_newest_beta() {
+    local json tag
+    json=$(curl -fsSL --max-time 30 \
+        -H "Accept: application/vnd.github.v3+json" \
+        "https://api.github.com/repos/$PUBLIC_REPO/releases?per_page=100" 2>/dev/null) || {
+        echo "Error: could not query releases to resolve the beta channel (network/API error)." >&2
+        echo "       Pin an exact tag instead: install-macos.sh v0.1.0-beta.N" >&2
+        exit 1
+    }
+    tag=$(printf '%s' "$json" \
+        | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+"' \
+        | sed -E 's/.*"(v[0-9.]+-beta\.[0-9]+)".*/\1/' \
+        | sort -V \
+        | tail -1)
+    if [[ -z "$tag" ]]; then
+        echo "Error: no beta release is available to install (beta is the default channel)." >&2
+        echo "       Pin an exact tag: install-macos.sh v0.1.0-beta.N — https://github.com/$PUBLIC_REPO/releases" >&2
+        exit 1
+    fi
+    local base="https://github.com/$PUBLIC_REPO/releases/download/$tag" asset code
+    for asset in "nyiakeeper-runtime.tar.gz" "nyiakeeper-runtime.tar.gz.sha256"; do
+        code=$(curl -s -o /dev/null -w "%{http_code}" -I -L --max-time 20 "$base/$asset" 2>/dev/null) || code="000"
+        if [[ "$code" != "200" ]]; then
+            echo "Error: beta release $tag is missing/unverifiable asset '$asset' (HTTP $code). Refusing to install." >&2
+            exit 1
+        fi
+    done
+    printf '%s' "$tag"
+}
 
 # A channel name may arrive via $1 (highest precedence) or NYIA_CHANNEL (lowest);
 # NYIA_VERSION sits between them and is always an exact version tag.
@@ -76,22 +106,28 @@ if [[ -n "$REQUESTED_CHANNEL" ]]; then
             # intentionally left un-pinned — do NOT collapse it into that default.
             RELEASE_TAG="latest"
             ;;
-        alpha|beta)
-            # FAIL CLOSED: this installer cannot manifest-resolve a prerelease
-            # channel to its newest tag. Refuse rather than installing stable.
-            # NOTE: functions like fail() are defined later, so echo directly.
+        alpha)
+            # Plan 320: alpha is deprecated and FROZEN — alpha is over, we are in beta.
             echo "" >&2
-            echo "Error: the macOS installer cannot install the '$REQUESTED_CHANNEL' channel by name." >&2
-            echo "       It resolves explicit version tags only (no channel manifest lookup)." >&2
-            echo "       Refusing to fall back to the stable 'latest' release." >&2
-            echo "" >&2
-            echo "       To install a '$REQUESTED_CHANNEL' build on macOS, pin its exact version tag, e.g.:" >&2
-            echo "         curl -fsSL <url>/install-macos.sh | bash -s -- v0.1.0-$REQUESTED_CHANNEL.N" >&2
-            echo "       Browse available tags: https://github.com/$PUBLIC_REPO/releases" >&2
+            echo "Error: the 'alpha' channel is deprecated and frozen (Plan 320) — alpha is over." >&2
+            echo "       Use the default (beta), or pin an exact tag: install-macos.sh v0.1.0-beta.N" >&2
+            echo "       Browse tags: https://github.com/$PUBLIC_REPO/releases" >&2
             echo "" >&2
             exit 1
             ;;
+        beta)
+            # Plan 320: resolve the newest beta SAFELY (filter + asset-verify + fail-closed).
+            RELEASE_TAG="$(_resolve_newest_beta)"
+            ;;
     esac
+fi
+
+# Plan 320: BETA is the default channel. When nothing explicit was requested and RELEASE_TAG is still
+# the un-pinned build default ("latest"), resolve the newest beta. A RELEASE installer has RELEASE_TAG
+# pinned to its exact tag by preprocess-runtime.sh, so this only affects the raw/source installer;
+# an explicit `latest` request sets REQUESTED_CHANNEL and is left on the stable channel.
+if [[ -z "$REQUESTED_CHANNEL" && "$RELEASE_TAG" == "latest" ]]; then
+    RELEASE_TAG="$(_resolve_newest_beta)"
 fi
 
 #─────────────────────────────────────────────────────────────

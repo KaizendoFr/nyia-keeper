@@ -150,6 +150,26 @@ _write_check_timestamp() {
 # File: $NYIAKEEPER_HOME/CHANNEL   (single line: "latest", "alpha", "beta", or empty = latest)
 # An empty or missing CHANNEL file is treated as the "latest" channel.
 
+# Normalize a channel string: trim, lowercase, validate against the known channels. Empty or
+# unrecognized values collapse to the DEFAULT channel (beta — Plan 320; was latest) — prevents
+# mixed-case or stray values from leaking into channel resolution. (Invalid-vs-empty distinction —
+# fail-closed-with-repair on corrupt state — is a documented fail-safe deviation; see plan 320.)
+_normalize_channel() {
+    local ch
+    ch=$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
+    case "$ch" in
+        "$CHANNEL_LATEST"|"$CHANNEL_ALPHA"|"$CHANNEL_BETA") printf '%s\n' "$ch" ;;
+        "") printf '%s\n' "$CHANNEL_BETA" ;;   # empty/missing → default beta, silently (migrate)
+        *)
+            # Plan 321 R5: a NON-empty but unrecognized value (corrupt/typo'd CHANNEL) — don't silently
+            # mask it. Warn on STDERR (stdout is captured as the channel value, so this can't corrupt
+            # it), then fall back to the default (beta) so launch still works.
+            echo "⚠️  Unrecognized channel '$1' — using 'beta'. Set a valid one: nyia update install beta" >&2
+            printf '%s\n' "$CHANNEL_BETA"
+            ;;
+    esac
+}
+
 get_installed_channel() {
     local nyia_home="${NYIAKEEPER_HOME:-}"
     # Fall back to XDG config dir if NYIAKEEPER_HOME not set
@@ -158,9 +178,9 @@ get_installed_channel() {
     fi
     local channel_file="$nyia_home/CHANNEL"
 
-    # Environment variable wins (allows scripted overrides without modifying state)
+    # Environment variable wins (allows scripted overrides without modifying state).
     if [[ -n "${NYIA_CHANNEL:-}" ]]; then
-        echo "$NYIA_CHANNEL"
+        _normalize_channel "$NYIA_CHANNEL"
         return 0
     fi
 
@@ -168,13 +188,23 @@ get_installed_channel() {
         local ch
         ch=$(tr -d '[:space:]' < "$channel_file" | head -1)
         if [[ -n "$ch" ]]; then
-            echo "$ch"
+            _normalize_channel "$ch"
             return 0
         fi
     fi
 
-    # Default channel: latest
-    echo "$CHANNEL_LATEST"
+    # No explicit channel state: infer from the installed version so an alpha/beta install stays on
+    # its own channel (alpha = frozen bridge — no compat mismatch), else default to BETA (Plan 320:
+    # beta is the default; auto-migrate legacy no-CHANNEL installs — was latest). Kept consistent with
+    # _resolve_host_channel (bin/common/shared.sh) so update channel and runtime image tag agree.
+    local _ver _ch
+    _ver=$(get_installed_version 2>/dev/null) || _ver=""
+    _ch=$(_infer_channel_from_version "$_ver")   # alpha | beta | latest
+    if [[ "$_ch" == "alpha" || "$_ch" == "beta" ]]; then
+        echo "$_ch"
+    else
+        echo "$CHANNEL_BETA"
+    fi
 }
 
 set_installed_channel() {
@@ -220,7 +250,8 @@ fetch_channel_version() {
     local channel="$1"
 
     local response
-    response=$(curl -s --max-time "$UPDATE_CURL_TIMEOUT" \
+    # -f: fail-closed on any HTTP error so a 404/error page body can never be parsed as a manifest.
+    response=$(curl -fs --max-time "$UPDATE_CURL_TIMEOUT" \
         "$CHANNELS_MANIFEST_URL" 2>/dev/null) || response=""
 
     if [[ -z "$response" ]]; then
@@ -294,6 +325,14 @@ fetch_latest_version() {
         tag=$(echo "$response" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
     fi
 
+    # "latest" is the STABLE/default channel: only a genuine (non-prerelease) release qualifies.
+    # If /releases/latest found nothing (a prerelease-only repo), FAIL CLOSED — never offer a
+    # prerelease as "latest" (Plan 319; client side of the channels.json latest contract). alpha
+    # keeps its same-channel /releases fallback below; beta already fail-closed above.
+    if [[ "$installed_channel" == "$CHANNEL_LATEST" && -z "$tag" ]]; then
+        return 1
+    fi
+
     # Stage 2: fallback to /releases (for prerelease-only repos)
     if [[ -z "$tag" ]]; then
         response=$(curl -s --max-time "$UPDATE_CURL_TIMEOUT" \
@@ -365,6 +404,7 @@ list_available_versions() {
             if [[ "${tags[$i]}" == "$current" ]]; then
                 marker="← installed"
             fi
+            case "${tags[$i]}" in *-alpha.*) marker="${marker:+$marker }(deprecated)" ;; esac   # Plan 321 R3
             printf "  %-28s %-14s %s\n" "${tags[$i]}" "${dates[$i]}" "$marker"
         done
     else
@@ -374,6 +414,7 @@ list_available_versions() {
             if [[ "${tags[$i]}" == "$current" ]]; then
                 marker="← installed"
             fi
+            case "${tags[$i]}" in *-alpha.*) marker="${marker:+$marker }(deprecated)" ;; esac   # Plan 321 R3
             printf "  %-28s %s\n" "${tags[$i]}" "$marker"
         done
     fi
@@ -433,6 +474,16 @@ cli_targeted_update() {
 
 # --- Version Comparison ---
 
+# Rank a prerelease FAMILY for ordering: rc > beta > alpha > unknown (higher = newer). Plan 319.
+_prerelease_family_rank() {
+    case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+        rc)    echo 3 ;;
+        beta)  echo 2 ;;
+        alpha) echo 1 ;;
+        *)     echo 0 ;;
+    esac
+}
+
 compare_versions() {
     local v1="$1"  # installed version
     local v2="$2"  # latest version
@@ -484,11 +535,19 @@ compare_versions() {
     if [[ -z "$pre1" && -n "$pre2" ]]; then return 1; fi  # stable > alpha
     if [[ -z "$pre1" && -z "$pre2" ]]; then return 1; fi  # equal
 
-    # Both have prerelease — compare alpha.N
+    # Both have prerelease — order by FAMILY first (rc > beta > alpha > unknown), THEN numeric suffix.
+    # Family-blindness was the Plan-319 downgrade bug: "beta.1" vs "alpha.68" compared only 1 vs 68,
+    # ranking alpha.68 as "newer" than beta.1. Compare the family before the number.
+    local fam1="${pre1%%.*}" fam2="${pre2%%.*}"
+    local rank1 rank2
+    rank1="$(_prerelease_family_rank "$fam1")"
+    rank2="$(_prerelease_family_rank "$fam2")"
+    if [[ "$rank1" -lt "$rank2" ]]; then return 0; fi   # v1 older family (alpha < beta) → update
+    if [[ "$rank1" -gt "$rank2" ]]; then return 1; fi   # v1 newer family (beta > alpha) → no update
+
+    # Same family — compare the numeric suffix (alpha.68 vs alpha.104, beta.1 vs beta.2, ...)
     local num1="${pre1##*.}"
     local num2="${pre2##*.}"
-
-    # Handle non-numeric suffixes
     if [[ "$num1" =~ ^[0-9]+$ && "$num2" =~ ^[0-9]+$ ]]; then
         if [[ "$num1" -lt "$num2" ]]; then return 0; fi
     fi
@@ -616,22 +675,32 @@ _verify_checksum() {
     local tarball="$1"
     local checksum_file="$2"
 
-    if [[ ! -f "$checksum_file" ]]; then
-        echo "Warning: No checksum file available. Skipping verification." >&2
-        return 0
+    # FAIL-CLOSED (Plan 319): never continue with an UNVERIFIED archive. A missing checksum file,
+    # a checksum that is not a real SHA-256 (e.g. a saved "Not Found" 404 body → "Not"), or a missing
+    # hashing tool are all hard failures — not "skip verification".
+    if [[ ! -s "$checksum_file" ]]; then
+        echo "Error: integrity verification failed — checksum asset missing or empty." >&2
+        echo "  The release may be missing its .sha256 asset; refusing to install unverified." >&2
+        return 1
     fi
 
     local expected_hash
-    expected_hash=$(awk '{print $1}' "$checksum_file")
-    local actual_hash
+    expected_hash=$(awk 'NR==1{print $1}' "$checksum_file")
+    if [[ ! "$expected_hash" =~ ^[0-9a-fA-F]{64}$ ]]; then
+        echo "Error: integrity verification failed — checksum is not a valid SHA-256 (got: '${expected_hash:0:16}')." >&2
+        echo "  This usually means the checksum download returned an error page, not the real asset." >&2
+        return 1
+    fi
 
+    local actual_hash
     if command -v sha256sum &>/dev/null; then
         actual_hash=$(sha256sum "$tarball" | awk '{print $1}')
     elif command -v shasum &>/dev/null; then
         actual_hash=$(shasum -a 256 "$tarball" | awk '{print $1}')
     else
-        echo "Warning: No sha256sum or shasum available. Skipping verification." >&2
-        return 0
+        echo "Error: integrity verification unavailable — no sha256sum or shasum found." >&2
+        echo "  Refusing to install an unverified archive; install coreutils (sha256sum) and retry." >&2
+        return 1
     fi
 
     if [[ "$expected_hash" != "$actual_hash" ]]; then
@@ -826,15 +895,27 @@ perform_update() {
         return 1
     fi
 
-    # Download checksum (best-effort — warn if unavailable, then continue)
+    # Download checksum (MANDATORY — never install an unverified archive; Plan 319 fail-closed).
     if ! _download_release_asset "$tmp_dir/nyiakeeper-runtime.tar.gz.sha256" \
-        "$checksum_url" "$UPDATE_CHECKSUM_TIMEOUT" "warn"; then
-        echo "Warning: Could not download checksum file. Skipping integrity verification." >&2
+        "$checksum_url" "$UPDATE_CHECKSUM_TIMEOUT" "mandatory"; then
+        echo "Error: could not download the checksum asset for ${target_tag}." >&2
+        echo "  Refusing to install an unverified archive (the release may be missing its .sha256)." >&2
+        _update_cleanup
+        release_update_lock
+        return 1
     fi
 
-    # Verify checksum
+    # Verify checksum (fail-closed: missing/invalid/mismatch all abort before extraction)
     if ! _verify_checksum "$tmp_dir/nyiakeeper-runtime.tar.gz" "$tmp_dir/nyiakeeper-runtime.tar.gz.sha256"; then
         echo "Error: Checksum verification failed. Aborting update." >&2
+        _update_cleanup
+        release_update_lock
+        return 1
+    fi
+
+    # Defense-in-depth: the (verified) archive must be a well-formed gzip before extraction (Plan 319).
+    if ! gzip -t "$tmp_dir/nyiakeeper-runtime.tar.gz" 2>/dev/null; then
+        echo "Error: downloaded archive is not a valid gzip. Aborting update." >&2
         _update_cleanup
         release_update_lock
         return 1
@@ -1015,6 +1096,36 @@ perform_rollback() {
 
 # --- Main Entry Point ---
 
+# Plan 320: one-time alpha EOL notice. Alpha is frozen (pinned at v0.1.0-alpha.103); show a
+# migrate-to-beta notice ONCE, DURABLY (a versioned marker survives restarts), INDEPENDENT of whether
+# an update is available (the frozen alpha never has a newer version). Marker written atomically AFTER
+# a successful display; a read-only home simply re-shows next launch. No TTY guard here so it is unit-
+# testable — the launch call site gates on an interactive terminal.
+_ALPHA_EOL_MARKER_VERSION="1"
+_maybe_show_alpha_eol_notice() {
+    local nyia_home="${NYIAKEEPER_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/nyiakeeper}"
+    local marker="$nyia_home/.alpha-eol-notice.v${_ALPHA_EOL_MARKER_VERSION}"
+
+    local channel
+    channel=$(get_installed_channel 2>/dev/null) || channel=""
+    [[ "$channel" == "alpha" ]] || return 0     # only alpha installs
+    [[ -f "$marker" ]] && return 0              # already shown (durable one-time)
+
+    echo "" >&2
+    echo "⚠️  The 'alpha' channel is deprecated and frozen — alpha is over; Nyia Keeper is on beta now." >&2
+    echo "    Your alpha install keeps working (pinned to v0.1.0-alpha.103) but no longer receives updates." >&2
+    echo "    Switch to beta:  nyia update install beta" >&2
+    echo "" >&2
+
+    # Record atomically AFTER display; best-effort (read-only home just re-shows next time).
+    mkdir -p "$nyia_home" 2>/dev/null || return 0
+    local tmp="$marker.tmp.$$"
+    if printf 'shown\n' > "$tmp" 2>/dev/null; then
+        mv -f "$tmp" "$marker" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+    fi
+    return 0
+}
+
 check_for_updates_if_due() {
     # Guard: VERSION file must exist — resolve config dir without side effects
     local _config_root="${XDG_CONFIG_HOME:-$HOME/.config}/nyiakeeper"
@@ -1063,6 +1174,13 @@ check_for_updates_if_due() {
     latest_version=$(fetch_latest_version "$current_version" "$installed_channel")
 
     if [[ -z "$latest_version" ]]; then
+        # 'latest' is the default/stable channel: when no stable exists yet it fails closed — but
+        # guide the user rather than going silent (Plan 319 review). Other channels stay quiet (an
+        # empty result there is usually a transient network/manifest miss).
+        if [[ "$installed_channel" == "$CHANNEL_LATEST" ]]; then
+            echo "No stable release available yet on the 'latest' channel." >&2
+            echo "  Switch to the beta channel with:  nyia update install beta" >&2
+        fi
         release_update_lock
         return 0
     fi
