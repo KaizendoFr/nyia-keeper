@@ -1576,8 +1576,9 @@ resolve_team_dir() {
     fi
 
     # Dir exists but has no recognizable content → warning
+    # (config dropped — Plan 328a: team source carries skills/agents/prompts only)
     local has_content=false
-    for subdir in skills agents prompts config; do
+    for subdir in skills agents prompts; do
         if [[ -d "$team_dir/$subdir" ]]; then
             has_content=true
             break
@@ -1596,6 +1597,84 @@ resolve_team_dir() {
 # global config skill directory ($NYIAKEEPER_HOME/$assistant/skills/).
 # Called AFTER propagate_user_skills() so user skills win (no-clobber).
 # Per-launch copy with no-clobber semantics.
+# ============================================================================
+# Team-source propagation shield (Plan 328b)
+# ------------------------------------------------------------------------
+# A shared team source is DATA read by the boxed assistant, not executed on the
+# host — so the risk this shield closes is the *copy/read mechanism* being abused:
+# a synced item that is a symlink (e.g. -> ~/.ssh/id_rsa) or a traversal path
+# would exfiltrate host files into the agent's reach. Protections are STRUCTURAL
+# (regular-file · no-symlink anywhere · no-special-file · safe-name), NOT by
+# extension (extensions are not a security boundary). Content trust (a malicious
+# prompt's text) is out of scope — that is the shared-repo+AI threat model, gated
+# later by an on-device guard model. TOCTOU between validate and copy is a
+# documented bounded-trust assumption (a local dir the user controls); no locking.
+
+# A team item name must be a plain, safe basename.
+_is_safe_team_name() {   # <name> -> 0 if safe
+    local n="$1"
+    # Force C locale for the charset match: under a UTF-8 *collating* locale (e.g.
+    # fr_FR.UTF-8) the range [A-Za-z] matches accented/unicode letters, which would
+    # silently ACCEPT a non-ASCII name and defeat this ASCII-only policy. C = byte-wise.
+    local LC_ALL=C
+    [[ -n "$n" ]] || return 1
+    [[ "$n" == "." || "$n" == ".." ]] && return 1
+    [[ "$n" == *"/"* ]] && return 1
+    [[ "$n" == *".."* ]] && return 1     # reject any ".." substring, not just a component
+    [[ "$n" == -* ]] && return 1         # no leading dash
+    [[ "$n" =~ ^[A-Za-z0-9._-]{1,255}$ ]] || return 1   # charset + bounded length
+    return 0
+}
+
+# True (0) if the item's path OR any node in its subtree is a symlink or a
+# special file (device/fifo/socket). Physical find (default -P) reports symlinks
+# as type l WITHOUT following them.
+_team_item_has_unsafe_node() {   # <path> -> 0 if an unsafe node exists
+    [[ -n "$(find "$1" \( -type l -o -type b -o -type c -o -type p -o -type s \) -print -quit 2>/dev/null)" ]]
+}
+
+# Validate a team item before propagation. kind = dir | file.
+# Refuses unsafe names, symlinks (top-level or nested), and special files —
+# without dereferencing. Reason left in _TEAM_ITEM_REASON.
+_TEAM_ITEM_REASON=""
+_validate_safe_team_item() {   # <item_path> <kind:dir|file> -> 0 safe / 1 unsafe
+    local item="$1" kind="$2" name
+    name=$(basename "$item")
+    _TEAM_ITEM_REASON=""
+    if ! _is_safe_team_name "$name"; then _TEAM_ITEM_REASON="unsafe name"; return 1; fi
+    if [[ -L "$item" ]]; then _TEAM_ITEM_REASON="symlink not allowed in a shared source"; return 1; fi
+    case "$kind" in
+        dir)  [[ -d "$item" ]] || { _TEAM_ITEM_REASON="not a directory"; return 1; } ;;
+        file) [[ -f "$item" ]] || { _TEAM_ITEM_REASON="not a regular file"; return 1; } ;;
+        *)    _TEAM_ITEM_REASON="unknown kind"; return 1 ;;
+    esac
+    if _team_item_has_unsafe_node "$item"; then
+        _TEAM_ITEM_REASON="contains a symlink or special file"; return 1
+    fi
+    return 0
+}
+
+# No-dereference, per-item-atomic copy of a VALIDATED item into <dest>.
+# Copies regular files/dirs only, into a temp under the destination parent
+# (same filesystem -> atomic mv), re-scans the staged copy (bounded-trust TOCTOU
+# guard), strips execute bits from data files, and never leaves/replaces a target
+# on failure. Caller enforces no-clobber (dest must not exist).
+_safe_copy_item() {   # <src> <dest> -> 0 ok / 1 fail (dest untouched on failure)
+    local src="$1" dest="$2" parent tmp staged
+    [[ -e "$dest" || -L "$dest" ]] && return 1   # refuse to overwrite (incl. a planted symlink)
+    parent=$(dirname "$dest")
+    mkdir -p "$parent" || return 1
+    tmp=$(mktemp -d "$parent/.nyia-team-XXXXXX" 2>/dev/null) || return 1
+    staged="$tmp/item"
+    if ! cp -R "$src" "$staged" 2>/dev/null; then rm -rf "$tmp"; return 1; fi
+    # A symlink/special that raced in after validation must not survive the copy.
+    if _team_item_has_unsafe_node "$staged"; then rm -rf "$tmp"; return 1; fi
+    find "$staged" -type f -exec chmod a-x {} + 2>/dev/null || true   # data files, not executables
+    if ! mv "$staged" "$dest" 2>/dev/null; then rm -rf "$tmp"; return 1; fi
+    rm -rf "$tmp"
+    return 0
+}
+
 propagate_team_skills() {
     local assistant_cli="$1"
     local team_dir="$2"
@@ -1615,27 +1694,37 @@ propagate_team_skills() {
     for skill_dir in "$source_dir"/*/; do
         # Skip if glob didn't match (no subdirectories)
         [[ -d "$skill_dir" ]] || continue
+        skill_dir="${skill_dir%/}"   # strip trailing slash so -L / basename are honest
 
         local skill_name=$(basename "$skill_dir")
 
-        # Only copy directories containing SKILL.md
-        if [[ ! -f "$skill_dir/SKILL.md" ]]; then
+        # SHIELD (328b): refuse symlinks (top-level/nested), special files, unsafe names
+        if ! _validate_safe_team_item "$skill_dir" dir; then
+            print_warning "⚠ Skipped team skill '$skill_name': $_TEAM_ITEM_REASON"
+            continue
+        fi
+
+        # Only copy directories containing a real (non-symlink) SKILL.md
+        if [[ ! -f "$skill_dir/SKILL.md" || -L "$skill_dir/SKILL.md" ]]; then
             print_verbose "Skipping team skill '$skill_name': no SKILL.md"
             continue
         fi
 
         # No-clobber: skip if target already exists (user skill wins)
-        if [[ -d "$target_dir/$skill_name" ]]; then
+        if [[ -e "$target_dir/$skill_name" || -L "$target_dir/$skill_name" ]]; then
             print_verbose "Team skill '$skill_name' already exists at target, skipping"
             skipped=$((skipped + 1))
             continue
         fi
 
-        # Copy skill directory to assistant config
+        # Safe copy (no-deref, per-item atomic) to assistant config
         mkdir -p "$target_dir"
-        cp -r "$skill_dir" "$target_dir/$skill_name"
-        print_verbose "Propagated team skill '$skill_name' to $assistant_cli"
-        copied=$((copied + 1))
+        if _safe_copy_item "$skill_dir" "$target_dir/$skill_name"; then
+            print_verbose "Propagated team skill '$skill_name' to $assistant_cli"
+            copied=$((copied + 1))
+        else
+            print_warning "⚠ Failed to propagate team skill '$skill_name' (copy error)"
+        fi
     done
 
     if [[ $copied -gt 0 ]]; then
@@ -1670,26 +1759,35 @@ propagate_team_agents() {
     local skipped=0
 
     for agent_file in "$source_dir"/*; do
-        # Skip if glob didn't match (empty directory)
-        [[ -e "$agent_file" ]] || continue
+        # Skip only if the glob didn't match. A broken symlink still enters the body
+        # and is refused by the validator below (with a warning), never dereferenced.
+        [[ -e "$agent_file" || -L "$agent_file" ]] || continue
 
-        # Only copy regular files, skip dotfiles and directories
         local filename=$(basename "$agent_file")
         [[ "$filename" == .* ]] && continue
-        [[ -f "$agent_file" ]] || continue
+
+        # SHIELD (328b): any non-hidden REGULAR file (no extension filter — not a
+        # security boundary); refuse symlinks/special files/unsafe names.
+        if ! _validate_safe_team_item "$agent_file" file; then
+            print_warning "⚠ Skipped team agent '$filename': $_TEAM_ITEM_REASON"
+            continue
+        fi
 
         # No-clobber: skip if target already exists (user agent wins)
-        if [[ -f "$target_dir/$filename" ]]; then
+        if [[ -e "$target_dir/$filename" || -L "$target_dir/$filename" ]]; then
             print_verbose "Team agent '$filename' already exists at target, skipping"
             skipped=$((skipped + 1))
             continue
         fi
 
-        # Copy agent file to assistant config
+        # Safe copy (no-deref, per-item atomic) to assistant config
         mkdir -p "$target_dir"
-        cp "$agent_file" "$target_dir/$filename"
-        print_verbose "Propagated team agent '$filename' to $assistant_cli"
-        copied=$((copied + 1))
+        if _safe_copy_item "$agent_file" "$target_dir/$filename"; then
+            print_verbose "Propagated team agent '$filename' to $assistant_cli"
+            copied=$((copied + 1))
+        else
+            print_warning "⚠ Failed to propagate team agent '$filename' (copy error)"
+        fi
     done
 
     if [[ $copied -gt 0 ]]; then
@@ -1697,78 +1795,6 @@ propagate_team_agents() {
     fi
 }
 
-# Sync the Git-backed private/team marketplace (Plan 246a) and propagate its
-# skills + agents into the assistant's global config via the EXISTING team
-# propagators (no new copy logic, no clobber).
-#
-# Precedence (R5): user > NYIA_TEAM_DIR > marketplace > project-shared > built-in.
-# This MUST be called AFTER user + team propagation so local content wins, and
-# BEFORE project-shared propagation.
-#
-# Fail-open (R3): sync_marketplace() never returns non-zero and never blocks.
-# Prints a one-line launch status (R8): synced N / offline-cached / not-configured.
-#
-# Arguments:
-#   $1 - assistant_cli
-#   $2 - nyiakeeper_home (propagation target base)
-#   $3 - project path (optional — enables project-level NYIA_MARKETPLACE_URL)
-propagate_marketplace_content() {
-    local assistant_cli="$1"
-    local nyiakeeper_home="$2"
-    local project_path="${3:-}"
-
-    # Source the marketplace + policy libs on demand (dev source → installed layout),
-    # mirroring the command-policy candidate-probing pattern used elsewhere.
-    if ! declare -f sync_marketplace >/dev/null 2>&1; then
-        local _policy_dev="$script_dir/../lib/command-policy.sh"
-        local _policy_inst="$HOME/.local/lib/nyiakeeper/command-policy.sh"
-        local _mp_dev="$script_dir/../lib/marketplace-sync.sh"
-        local _mp_inst="$HOME/.local/lib/nyiakeeper/marketplace-sync.sh"
-        [[ -f "$_policy_dev" ]] && source "$_policy_dev"
-        [[ ! -f "$_policy_dev" && -f "$_policy_inst" ]] && source "$_policy_inst"
-        if [[ -f "$_mp_dev" ]]; then
-            source "$_mp_dev"
-        elif [[ -f "$_mp_inst" ]]; then
-            source "$_mp_inst"
-        fi
-    fi
-
-    # If the lib still isn't available, fail open silently — launch must proceed.
-    if ! declare -f sync_marketplace >/dev/null 2>&1; then
-        return 0
-    fi
-
-    # Fail-open sync. Path is returned on stdout AND in NYIA_MARKETPLACE_PATH;
-    # we read the side-effect variables to avoid a subshell that would discard
-    # the status/count updates.
-    sync_marketplace "$project_path" >/dev/null || true
-
-    local mp_path="${NYIA_MARKETPLACE_PATH:-}"
-    local mp_status="${NYIA_MARKETPLACE_STATUS:-not-configured}"
-    local mp_count="${NYIA_MARKETPLACE_ITEM_COUNT:-0}"
-
-    # Reuse the team propagators on the cached marketplace dir (skills + agents).
-    if [[ -n "$mp_path" && -d "$mp_path" ]]; then
-        propagate_team_skills "$assistant_cli" "$mp_path" "$nyiakeeper_home"
-        propagate_team_agents "$assistant_cli" "$mp_path" "$nyiakeeper_home"
-    fi
-
-    # Launch status line (R8).
-    case "$mp_status" in
-        synced)
-            print_info "📦 [MARKETPLACE] Synced ${mp_count} item(s)"
-            ;;
-        offline-cached)
-            print_warning "📦 [MARKETPLACE] Offline — using cached (${mp_count} item(s))"
-            ;;
-        not-configured)
-            # Silent unless verbose: most users have no marketplace configured.
-            print_verbose "[MARKETPLACE] Not configured"
-            ;;
-    esac
-
-    return 0
-}
 
 # === VERSION MANAGEMENT ===
 
@@ -2287,15 +2313,32 @@ compose_project_prompt() {
     # 5b. Team prompts (between user and project — project is closer to code, wins via ordering)
     local team_dir
     team_dir=$(resolve_team_dir)
-    if [[ -n "$team_dir" ]]; then
+    # Defense-in-depth: the team-prompt filename embeds $assistant_type; it is fixed
+    # by which launcher binary ran (not team/remote-controlled), but assert its shape
+    # so it can never become a path-traversal seam if that ever changes.
+    if [[ -n "$team_dir" && "$assistant_type" =~ ^[a-z][a-z0-9-]*$ ]]; then
         local team_prompts="$team_dir/prompts"
-        if [[ -f "$team_prompts/project-overrides.md" ]]; then
-            final_prompt+="# Team Global Overrides"$'\n'
-            final_prompt+="$(cat "$team_prompts/project-overrides.md")"$'\n\n'
-        fi
-        if [[ -f "$team_prompts/${assistant_type}-project.md" ]]; then
-            final_prompt+="# Team ${assistant_type} Specific"$'\n'
-            final_prompt+="$(cat "$team_prompts/${assistant_type}-project.md")"$'\n\n'
+        # SHIELD (328b): team prompts are READ (cat) into the composed prompt, not
+        # copied — so a symlinked prompt file/dir would exfiltrate a host file into
+        # the prompt. Validate BEFORE any cat: the -L checks run first (they do not
+        # dereference), so a symlink is skipped with no fallback read.
+        if [[ -L "$team_prompts" ]]; then
+            print_warning "⚠ Skipped team prompts: '$team_prompts' is a symlink"
+        else
+            local _team_po="$team_prompts/project-overrides.md"
+            if [[ -L "$_team_po" ]]; then
+                print_warning "⚠ Skipped team prompt 'project-overrides.md': symlink not allowed"
+            elif [[ -f "$_team_po" ]]; then
+                final_prompt+="# Team Global Overrides"$'\n'
+                final_prompt+="$(cat "$_team_po")"$'\n\n'
+            fi
+            local _team_ap="$team_prompts/${assistant_type}-project.md"
+            if [[ -L "$_team_ap" ]]; then
+                print_warning "⚠ Skipped team prompt '${assistant_type}-project.md': symlink not allowed"
+            elif [[ -f "$_team_ap" ]]; then
+                final_prompt+="# Team ${assistant_type} Specific"$'\n'
+                final_prompt+="$(cat "$_team_ap")"$'\n\n'
+            fi
         fi
     fi
 
@@ -4057,10 +4100,6 @@ login_assistant() {
         propagate_team_agents "$assistant_cli" "$team_dir" "$nyia_home"
     fi
 
-    # Sync + propagate the Git-backed marketplace (Plan 246a). Global scope here
-    # (login is not project-bound); fail-open, never blocks login.
-    propagate_marketplace_content "$assistant_cli" "$nyia_home" ""
-
     # Source provider-specific hooks if they exist (ensure functions are available)
     local provider_hooks_file="$dockerfile_path/${assistant_cli}-hooks.sh"
     if [[ -f "$provider_hooks_file" ]]; then
@@ -4629,10 +4668,6 @@ run_assistant() {
         propagate_team_skills "$assistant_cli" "$team_dir" "$nyiakeeper_home"
         propagate_team_agents "$assistant_cli" "$team_dir" "$nyiakeeper_home"
     fi
-
-    # Sync + propagate the Git-backed marketplace (Plan 246a). Runs AFTER team
-    # propagation (so team wins) and BEFORE project-shared. Fail-open: never blocks.
-    propagate_marketplace_content "$assistant_cli" "$nyiakeeper_home" "$project_path"
 
     # Propagate project-shared skills and agents to assistant project dir
     propagate_shared_skills "$assistant_cli" "$project_path"

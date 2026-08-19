@@ -1,6 +1,0 @@
-{
-  "name": "My Team Marketplace",
-  "description": "Private Nyia Keeper marketplace — shared skills and agents for the team.",
-  "version": "1.0.0",
-  "schema": "nyia-marketplace/v1"
-}

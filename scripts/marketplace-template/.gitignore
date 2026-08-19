@@ -1,9 +1,0 @@
-# OS / editor cruft
-.DS_Store
-Thumbs.db
-*.swp
-*~
-
-# Local-only notes (do not distribute)
-.local/
-NOTES.local.md

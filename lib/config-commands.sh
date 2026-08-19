@@ -190,7 +190,6 @@ _config_handle_view() {
             NYIA_COMMAND_MODE) short_name="command_mode" ;;
             NYIA_RAG_MODEL) short_name="rag_model" ;;
             NYIA_TEAM_DIR) short_name="team_dir" ;;
-            NYIA_MARKETPLACE_URL) short_name="marketplace_url" ;;
             NYIA_WORKSPACE_SYNC) short_name="workspace_sync" ;;
             NYIA_WHATSUP_ENABLED) short_name="whatsup_enabled" ;;
             NYIA_WHATSUP_AUTO_READ) short_name="whatsup_auto_read" ;;

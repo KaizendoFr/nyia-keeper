@@ -19,7 +19,6 @@ readonly NYIA_USER_CONFIG_KEYS=(
     "NYIA_COMMAND_MODE"
     "NYIA_RAG_MODEL"
     "NYIA_TEAM_DIR"
-    "NYIA_MARKETPLACE_URL"
     "NYIA_WORKSPACE_SYNC"
     "NYIA_WHATSUP_ENABLED"
     "NYIA_WHATSUP_AUTO_READ"
@@ -34,7 +33,6 @@ readonly NYIA_VALID_COMMAND_MODES=("safe" "full")
 readonly NYIA_DEFAULT_COMMAND_MODE="safe"
 readonly NYIA_DEFAULT_RAG_MODEL="nomic-embed-text"
 readonly NYIA_DEFAULT_TEAM_DIR=""
-readonly NYIA_DEFAULT_MARKETPLACE_URL=""
 readonly NYIA_DEFAULT_WORKSPACE_SYNC="false"
 readonly NYIA_DEFAULT_WHATSUP_ENABLED="false"
 readonly NYIA_DEFAULT_WHATSUP_AUTO_READ="never"
@@ -53,7 +51,6 @@ _map_config_key_name() {
         command_mode)  echo "NYIA_COMMAND_MODE" ;;
         rag_model)     echo "NYIA_RAG_MODEL" ;;
         team_dir)      echo "NYIA_TEAM_DIR" ;;
-        marketplace_url) echo "NYIA_MARKETPLACE_URL" ;;
         workspace_sync) echo "NYIA_WORKSPACE_SYNC" ;;
         whatsup_enabled) echo "NYIA_WHATSUP_ENABLED" ;;
         whatsup_auto_read) echo "NYIA_WHATSUP_AUTO_READ" ;;
@@ -64,7 +61,6 @@ _map_config_key_name() {
         NYIA_COMMAND_MODE)  echo "NYIA_COMMAND_MODE" ;;
         NYIA_RAG_MODEL)     echo "NYIA_RAG_MODEL" ;;
         NYIA_TEAM_DIR)      echo "NYIA_TEAM_DIR" ;;
-        NYIA_MARKETPLACE_URL) echo "NYIA_MARKETPLACE_URL" ;;
         NYIA_WORKSPACE_SYNC) echo "NYIA_WORKSPACE_SYNC" ;;
         NYIA_WHATSUP_ENABLED) echo "NYIA_WHATSUP_ENABLED" ;;
         NYIA_WHATSUP_AUTO_READ) echo "NYIA_WHATSUP_AUTO_READ" ;;
@@ -95,41 +91,6 @@ validate_command_mode() {
         safe|full) return 0 ;;
         *) return 1 ;;
     esac
-}
-
-# Validate a marketplace URL value.
-# Accepts git-clonable URLs only:
-#   - scheme URLs:  https://host/path, http://host/path, git://host/path, ssh://[user@]host[:port]/path
-#   - scp-like:     [user@]host:path  (e.g. git@github.com:org/repo.git)
-# Returns 0 if valid, 1 if not. No network access (syntactic check only).
-validate_marketplace_url() {
-    local url="$1"
-    [[ -z "$url" ]] && return 1
-
-    # Reject command-substitution / injection characters defensively.
-    case "$url" in
-        *'$('* | *'`'* | *'${'* | *';'* | *'&'* | *'|'* | *' '*) return 1 ;;
-    esac
-
-    # Scheme-based URLs (https/http/git/ssh require a host before the path)
-    if [[ "$url" =~ ^(https|http|git|ssh)://[^/]+/.+ ]]; then
-        return 0
-    fi
-
-    # Local filesystem repos: file:///abs/path (git-clonable; used for local
-    # mirrors and tests). Requires an absolute path after the scheme.
-    if [[ "$url" =~ ^file:///.+ ]]; then
-        return 0
-    fi
-
-    # scp-like syntax: [user@]host:path (host must not contain a slash before ':').
-    # Reject anything containing "://" here — that is a (mis-spelled) scheme URL,
-    # not scp syntax, and only the schemes whitelisted above are valid.
-    if [[ "$url" != *"://"* ]] && [[ "$url" =~ ^([A-Za-z0-9._~-]+@)?[A-Za-z0-9._-]+:.+ ]]; then
-        return 0
-    fi
-
-    return 1
 }
 
 # Validate a config value for a given key
@@ -172,19 +133,6 @@ validate_config_value() {
             # Any non-empty string is valid (directory path)
             if [[ -z "$value" ]]; then
                 echo "Error: team_dir cannot be empty. Use 'nyia config global team_dir=' to unset." >&2
-                return 1
-            fi
-            ;;
-        NYIA_MARKETPLACE_URL)
-            # Must look like a git URL: https://, http://, git://, ssh://,
-            # or scp-like syntax (user@host:path / host:path). Unsetting handled
-            # by the caller before validation (empty value clears the key).
-            if [[ -z "$value" ]]; then
-                echo "Error: marketplace_url cannot be empty. Use 'nyia config global marketplace_url=' to unset." >&2
-                return 1
-            fi
-            if ! validate_marketplace_url "$value"; then
-                echo "Error: Invalid marketplace_url '$value'. Expected a git URL (https://, ssh://, git://, or user@host:path)." >&2
                 return 1
             fi
             ;;
@@ -368,7 +316,7 @@ parse_config_file() {
 #   5. Project shared (.nyiakeeper/shared/config/nyia.conf) — safe parsed
 #   6. Global + assistant (~/.config/nyiakeeper/config/{assistant}.conf) — source OK
 #   7. Global (~/.config/nyiakeeper/config/nyia.conf) — source OK
-#   8. Team ($NYIA_TEAM_DIR/config/nyia.conf) — safe parsed (untrusted)
+#   8. (Team config tier removed — Plan 328a: team_dir carries skills/agents/prompts only)
 #   9. Default (safe)
 #
 # Arguments:
@@ -471,19 +419,8 @@ resolve_command_mode() {
         fi
     fi
 
-    # Level 8: Team config (safe-parsed — untrusted, another team member wrote it)
-    if [[ -z "$mode" ]]; then
-        local team_dir=""
-        if [[ -f "$config_home/nyia.conf" ]]; then
-            team_dir=$(_source_config_key "$config_home/nyia.conf" "NYIA_TEAM_DIR") || true
-        fi
-        if [[ -n "$team_dir" && -f "$team_dir/config/nyia.conf" ]]; then
-            local val
-            val=$(parse_config_file "$team_dir/config/nyia.conf" "NYIA_COMMAND_MODE") && {
-                [[ -n "$val" ]] && mode="$val" && source_label="team"
-            }
-        fi
-    fi
+    # (Team config tier removed — Plan 328a: a shared team source must never
+    # silently set command-mode. team_dir carries skills/agents/prompts only.)
 
     # Level 9: Default
     if [[ -z "$mode" ]]; then
@@ -748,17 +685,6 @@ read_effective_config_value() {
                 echo "(not configured)"
             fi
             ;;
-        NYIA_MARKETPLACE_URL)
-            local result
-            result=$(_resolve_marketplace_url_config "$project_path")
-            local url="${result%%	*}"
-            local src="${result#*	}"
-            if [[ -n "$url" ]]; then
-                echo "$url (source: $src)"
-            else
-                echo "(not configured)"
-            fi
-            ;;
         NYIA_WORKSPACE_SYNC)
             local result
             result=$(_resolve_workspace_sync_config "$project_path")
@@ -879,48 +805,6 @@ _resolve_team_dir_config() {
     printf '%s\t%s\n' "$dir" "$source_label"
 }
 
-# Resolver for NYIA_MARKETPLACE_URL.
-# UNLIKE NYIA_TEAM_DIR (global-only), the marketplace URL is settable at BOTH
-# project and global precedence so a repo can pin its own team marketplace.
-# Precedence: project .nyiakeeper/nyia.conf (safe parsed, untrusted) > global > default(empty).
-# Arguments:
-#   $1 - project path (optional — needed to read project config)
-_resolve_marketplace_url_config() {
-    local project_path="${1:-}"
-    local url=""
-    local source_label=""
-    local config_home="${NYIA_CONFIG_HOME:-${HOME}/.config/nyiakeeper/config}"
-
-    # Level 1: Project global config (untrusted — safe parsed)
-    if [[ -z "$url" && -n "$project_path" ]]; then
-        local f="$project_path/.nyiakeeper/nyia.conf"
-        if [[ -f "$f" ]]; then
-            local val
-            val=$(parse_config_file "$f" "NYIA_MARKETPLACE_URL") && {
-                [[ -n "$val" ]] && url="$val" && source_label="project-global"
-            }
-        fi
-    fi
-
-    # Level 2: Global config (user-controlled — source OK)
-    if [[ -z "$url" ]]; then
-        local f="$config_home/nyia.conf"
-        if [[ -f "$f" ]]; then
-            local val
-            val=$(_source_config_key "$f" "NYIA_MARKETPLACE_URL") && {
-                [[ -n "$val" ]] && url="$val" && source_label="global"
-            }
-        fi
-    fi
-
-    # Level 3: Default (empty)
-    if [[ -z "$url" ]]; then
-        url="$NYIA_DEFAULT_MARKETPLACE_URL"
-        source_label="default"
-    fi
-
-    printf '%s\t%s\n' "$url" "$source_label"
-}
 
 # Unified resolver for NYIA_WORKSPACE_SYNC
 # Precedence: workspace.conf directive > global config > default (false)
@@ -1120,19 +1004,8 @@ _resolve_rag_model() {
         fi
     fi
 
-    # Level 8: Team config
-    if [[ -z "$model" ]]; then
-        local team_dir=""
-        if [[ -f "$config_home/nyia.conf" ]]; then
-            team_dir=$(_source_config_key "$config_home/nyia.conf" "NYIA_TEAM_DIR") || true
-        fi
-        if [[ -n "$team_dir" && -f "$team_dir/config/nyia.conf" ]]; then
-            local val
-            val=$(parse_config_file "$team_dir/config/nyia.conf" "NYIA_RAG_MODEL") && {
-                [[ -n "$val" ]] && model="$val" && source_label="team"
-            }
-        fi
-    fi
+    # (Team config tier removed — Plan 328a: a shared team source must never
+    # silently set the RAG model. team_dir carries skills/agents/prompts only.)
 
     # Level 9: Default
     if [[ -z "$model" ]]; then

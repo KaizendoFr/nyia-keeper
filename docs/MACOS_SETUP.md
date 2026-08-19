@@ -12,7 +12,7 @@ curl -fsSL https://raw.githubusercontent.com/KaizendoFr/nyia-keeper/main/scripts
 
 To install a specific version:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/KaizendoFr/nyia-keeper/main/scripts/install-macos.sh | bash -s v0.1.0-alpha.47
+curl -fsSL https://raw.githubusercontent.com/KaizendoFr/nyia-keeper/main/scripts/install-macos.sh | bash -s v0.1.0-beta.1
 ```
 
 The installer will:

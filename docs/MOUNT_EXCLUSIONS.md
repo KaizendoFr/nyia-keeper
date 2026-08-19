@@ -1,6 +1,10 @@
 # Mount Exclusions
 
-Nyia Keeper automatically hides sensitive files (API keys, certificates, cloud credentials) from containers using Docker overlay mounts. This prevents accidental exposure of secrets to AI assistants while keeping the rest of your project fully visible.
+Nyia Keeper hides sensitive files (API keys, certificates, cloud credentials) from the container using Docker overlay mounts — the agent sees a read-only placeholder, while the rest of your project stays fully visible. The built-in patterns below are a **starting point, not the finish line**: they catch the common cases, but only you know which files are sensitive in *your* project. **Review what Nyia will hide, and add your own private files before your first launch.**
+
+> **Exclusion hides the *working* file, not old commits.** A secret that was ever committed is still
+> recoverable from git history (`git show`, `git log -p`). To keep the container from reading old commits
+> too, use [Git History Cutoff](GIT_HISTORY_CUTOFF.md).
 
 ## Default Patterns
 

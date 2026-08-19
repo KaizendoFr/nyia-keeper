@@ -20,8 +20,7 @@ nyia config global  [assistant] key=value   # write global scope
 |---|---|---|---|
 | `command_mode` | `NYIA_COMMAND_MODE` | `safe`\|`full` | dangerous-value confirm gate for `full` global |
 | `rag_model` | `NYIA_RAG_MODEL` | model string | also settable in `<assistant>.conf` (see "already-both") |
-| `team_dir` | `NYIA_TEAM_DIR` | path | |
-| `marketplace_url` | `NYIA_MARKETPLACE_URL` | git URL | paired with `nyia marketplace` ops |
+| `team_dir` | `NYIA_TEAM_DIR` | path | local folder of shared skills/personas/prompts (you sync it) |
 | `workspace_sync` | `NYIA_WORKSPACE_SYNC` | bool | also a `workspace.conf` directive (`sync_branches`, higher precedence) |
 | `whatsup_enabled` | `NYIA_WHATSUP_ENABLED` | bool | |
 | `whatsup_auto_read` | `NYIA_WHATSUP_AUTO_READ` | `kickoff` \| `never` | |
@@ -72,8 +71,8 @@ global scope, or a private creds file.
 - **Large or append-managed collections that have their own CLI → structural files** (e.g.
   `exclusions.conf` via `nyia exclusions`). *Heuristic, not absolute:* `NYIA_PROTECTED_BRANCHES` is a
   comma-list living as a config scalar (union-merged across scopes) — a list is not automatically structural.
-- **Subcommands do operations, not settings.** `marketplace_url` is a config key; `nyia marketplace` does
-  `init`/`sync`. New domain features follow this shape (e.g. `git_history_cutoff` key + `nyia git-history`
+- **Subcommands do operations, not settings.** A config key holds a setting; a subcommand runs an
+  operation. New domain features follow this shape (e.g. `git_history_cutoff` key + `nyia git-history`
   ops; `network_egress_policy` key + the egress firewall).
 
 ## "Already-both" settings (two sources, by design)

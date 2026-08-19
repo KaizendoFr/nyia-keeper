@@ -1,13 +1,28 @@
-# Team Sharing - Shared Resources Across Machines
+# Team Directory — shared skills, personas & prompts (local folder)
 
-Nyia Keeper supports a **team directory** for sharing skills, agents, prompts, and configuration across multiple machines or team members. The team directory is a regular folder on disk (synced via git, Dropbox, NFS, or any other mechanism you choose).
+Nyia Keeper shares team resources through a **team directory**: a regular folder on disk that you keep in
+sync however you like (git, Dropbox, NFS, a symlink — your choice). Nyia only *reads* it. It carries
+**skills, personas (agents), and prompt overlays** — the resources the assistant uses. *(It does not carry
+`config` values: command-mode and the RAG model must never be silently inherited from a shared source.)*
+
+**How to sync it is up to you, and that's the review gate.** If you keep the folder in git, your own
+`git pull` is where you *see the diff* before new team content reaches your assistants — a deliberate
+human checkpoint.
+
+**Trust model (honest).** Shared team content is a **trust decision**, the same as trusting any shared
+codebase you point an AI tool at: a teammate with write access can add content, and no tool can tell you
+in advance whether that content is well-intentioned — this is the git-shared-repo + AI threat model, not
+something specific to Nyia. What Nyia *does* protect against, today, is the **propagation mechanism** being
+abused: a shared item cannot smuggle a symlink or a traversal path to exfiltrate files from your host (see
+the [Security model](THREAT_MODEL.md)). Content-level review of shared skills/prompts is planned next
+(an on-device guard model).
 
 ## Quick Start
 
 1. Create a shared directory with the expected structure:
 
 ```bash
-mkdir -p /path/to/team-shared/{skills,agents,prompts,config}
+mkdir -p /path/to/team-shared/{skills,agents,prompts}
 ```
 
 2. Configure Nyia Keeper to use it:
@@ -38,10 +53,8 @@ The team directory follows the same layout as `.nyiakeeper/shared/`:
 ├── agents/              # Shared agent personas
 │   ├── reviewer.md      # Claude agent (Markdown)
 │   └── architect.md
-├── prompts/             # Shared prompt overlays
-│   └── team-guidelines.md
-└── config/              # Shared configuration
-    └── team-defaults.conf
+└── prompts/             # Shared prompt overlays
+    └── team-guidelines.md
 ```
 
 ### Skills
@@ -64,9 +77,9 @@ Agent personas are assistant-specific files placed directly in the `agents/` dir
 
 Prompt overlays placed in `prompts/` are propagated to each assistant at launch. Use these for team-wide coding guidelines, review checklists, or domain-specific instructions.
 
-### Config
-
-Configuration files in `config/` provide team-level defaults. These are safe-parsed (no secrets -- values are read as plain key=value pairs).
+> **No `config/`.** A team directory does **not** carry config values (command-mode, RAG model). Those are
+> deliberately excluded so a shared source can never silently change how much the agent is allowed to do —
+> set them locally with `nyia config`.
 
 ## Precedence
 
@@ -107,14 +120,18 @@ nyia status
 This shows:
 - Whether a team directory is configured
 - Whether the directory exists on disk
-- Which subdirectories are present (skills, agents, prompts, config)
+- Which subdirectories are present (skills, agents, prompts)
 
 ## Security
 
-- Team configuration is **safe-parsed**: no shell expansion, no command execution.
 - The team directory is read-only from Nyia Keeper's perspective -- it never writes to it.
 - No secrets or credentials should be placed in the team directory.
-- Team config values go through the same sanitization as all other config sources.
+- **Propagation is guarded** (see the [Security model](THREAT_MODEL.md)): a shared skill/agent/prompt that
+  is a symlink, contains a nested symlink, or uses a traversal path is refused — it cannot be used to read
+  files from your host. This is a structural guard, not content review.
+- **Content is a trust decision.** The guard above stops the *mechanism* being abused; it does not judge
+  whether a shared prompt's *text* is safe. Treat a shared source like any shared repo you'd point an AI
+  tool at. On-device content review is planned next.
 
 ## Sync Strategies
 
@@ -127,12 +144,12 @@ Nyia Keeper does not manage synchronization of the team directory. Common approa
 | NFS/SMB mount | Real-time access | Requires network infrastructure |
 | Symlink to monorepo subdirectory | Zero-copy, always current | Ties to monorepo |
 
-## Announcing Changes with `/whatsup`
+## Team news (`/whatsup`)
 
-Sharing skills, agents, and prompts (above) makes resources *available* to the
-team. The `/whatsup` skill makes changes to them *discoverable*: when a teammate
-ships a new skill, edits a prompt, or changes a convention, they publish a short
-news entry, and everyone else sees it instead of finding out by accident.
+**`/whatsup` is a different class — news, not resources.** The team directory (above) makes resources
+*available*; `/whatsup` makes changes to them *discoverable*: when a teammate ships a new skill, edits a
+prompt, or changes a convention, they publish a short news entry (committed to the project's git), and
+everyone else sees it instead of finding out by accident.
 
 > "Nyia" (にゃ) is the cat that watches your code — `/whatsup` is the cat telling
 > you what changed.
@@ -210,7 +227,7 @@ ls -la /path/to/team-shared # Check if directory exists
 
 ### "Team dir configured but has no content"
 
-The directory exists but contains none of the expected subdirectories (`skills/`, `agents/`, `prompts/`, `config/`). Create at least one:
+The directory exists but contains none of the expected subdirectories (`skills/`, `agents/`, `prompts/`). Create at least one:
 ```bash
 mkdir -p /path/to/team-shared/skills
 ```

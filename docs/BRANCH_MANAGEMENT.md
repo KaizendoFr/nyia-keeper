@@ -8,6 +8,11 @@ By default, Nyia Keeper works on your **current branch** — no new branch is cr
 
 **Key principle**: AI work is never done directly on protected branches (main, master, plus any you configure).
 
+**Why it's a hard requirement.** This isn't only about undoing the AI — it's a forcing function for
+*you*: git every time, on a work branch, protected branches guarded from the start, so an inattentive
+mistake (yours or the agent's) is always recoverable and reviewable before it lands. See
+[Why Nyia Keeper](WHY.md).
+
 ---
 
 ## Default Behavior

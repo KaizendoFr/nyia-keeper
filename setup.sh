@@ -163,8 +163,6 @@ if [[ -f "$BIN_DIR/assistant-template.sh" ]]; then
     # Also fix paths in main nyia script
     sed_inplace 's|exclusions_lib="\$script_dir_real/\.\./lib/exclusions-commands\.sh"|exclusions_lib="\$HOME/.local/lib/nyiakeeper/exclusions-commands.sh"|' "$BIN_DIR/nyia"
     sed_inplace 's|mount_exclusions_lib="\$script_dir_real/\.\./lib/mount-exclusions\.sh"|mount_exclusions_lib="\$HOME/.local/lib/nyiakeeper/mount-exclusions.sh"|' "$BIN_DIR/nyia"
-    # Fix marketplace-commands.sh path (Plan 246a)
-    sed_inplace 's|marketplace_lib="\$script_dir_real/\.\./lib/marketplace-commands\.sh"|marketplace_lib="\$HOME/.local/lib/nyiakeeper/marketplace-commands.sh"|' "$BIN_DIR/nyia"
     # Fix config-commands.sh path (Plan 282)
     sed_inplace 's|_cc="\$script_dir/\.\./lib/config-commands\.sh"|_cc="\$HOME/.local/lib/nyiakeeper/config-commands.sh"|' "$BIN_DIR/nyia"
     echo "✅ Updated paths for installed layout"

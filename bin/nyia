@@ -354,36 +354,6 @@ case "${1:-help}" in
         
         handle_exclusions_command "$@"
         ;;
-    marketplace)
-        # Handle marketplace command (Plan 246a)
-        shift
-        script_dir_real="$(dirname "$(realpath "$0")")"
-        marketplace_lib="$script_dir_real/../lib/marketplace-commands.sh"
-
-        if [[ -f "$marketplace_lib" ]]; then
-            source "$marketplace_lib"
-        else
-            echo "Error: Marketplace commands library not found"
-            echo "Missing: $marketplace_lib"
-            exit 1
-        fi
-
-        subcommand="${1:-help}"
-        shift || true
-        case "$subcommand" in
-            init)
-                marketplace_init "$@"
-                ;;
-            help|--help|-h)
-                marketplace_help
-                ;;
-            *)
-                echo "Error: Unknown marketplace command: $subcommand" >&2
-                marketplace_help
-                exit 1
-                ;;
-        esac
-        ;;
     profile)
         # Authentication profiles (Plan 286) — read-only enumeration.
         shift
@@ -486,7 +456,6 @@ case "${1:-help}" in
         echo "  nyia config <command>       # Configure system settings"
         echo "  nyia clean                  # Clean old Docker images"
         echo "  nyia exclusions [command]   # Manage file exclusions"
-        echo "  nyia marketplace init       # Scaffold a private/team marketplace"
         echo "  nyia update <subcommand>    # Update management"
         echo "  nyia rollback               # Rollback to previous version"
         echo "  nyia completions <shell>    # Generate shell auto-completion (bash, zsh)"

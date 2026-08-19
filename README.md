@@ -4,7 +4,7 @@ Run AI coding agents on your machine — **without handing them your secrets.** 
 your project inside a Docker container, but **sensitive files (`.env`, `*.key`, `id_rsa`, `.ssh/`,
 `.aws/`, `credentials.*`, …) are auto-detected and kept out of its reach** by default, you **share only
 what you choose**, and it's **git-safe by default** (work branches + protected-branch guards). On top of
-that, a repeatable **plan → review → implement → checkpoint** workflow so agents run on a leash, not on
+that, a repeatable **plan → review → implement → checkpoint** workflow so agents run on a process, not on
 vibes.
 
 This isn't VM-grade escape isolation — Docker's own Sandboxes do microVMs if that's what you need. Nyia
@@ -43,9 +43,11 @@ nyia-claude
 
 ## Support & contributing
 
-Best-effort. **Bug reports are welcome via [Issues](https://github.com/KaizendoFr/nyia-keeper/issues).**
+Best-effort. **Bug reports, questions, and ideas are welcome via
+[Issues](https://github.com/KaizendoFr/nyia-keeper/issues) and
+[Discussions](https://github.com/KaizendoFr/nyia-keeper/discussions).**
 I'm **not taking pull requests** — development happens in a private repo, so this one is
-distribution-only. It's licensed **AGPL-3.0-or-later OR Proprietary**, so if it's useful to you, fork it.
+distribution-only. It's licensed **AGPL-3.0-or-later OR Proprietary**.
 
 A tool I like, not a product.
 

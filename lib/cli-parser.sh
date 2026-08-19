@@ -214,7 +214,6 @@ get_dispatcher_arg_desc() {
         "list") echo "List available assistants (add --compact for one-line output)" ;;
         "status") echo "Show global Nyia Keeper status" ;;
         "exclusions") echo "Manage mount exclusions for security" ;;
-        "marketplace") echo "Manage a private/team marketplace (init)" ;;
         "profile") echo "Manage profiles: list, create (auth-only account, or --persona for its own content)" ;;
         "git-history") echo "Review/reconcile the assistant's commits under a history cutoff" ;;
         "update") echo "Update management (status, list, check, install)" ;;
@@ -227,7 +226,7 @@ get_dispatcher_arg_desc() {
 
 # Get all dispatcher arguments (for iteration)
 get_dispatcher_args() {
-    echo "config list status exclusions marketplace profile git-history update rollback completions logo"
+    echo "config list status exclusions profile git-history update rollback completions logo"
 }
 
 # === HELP SYSTEM ===
@@ -500,7 +499,7 @@ parse_dispatcher_args() {
                     exit 1
                 fi
                 ;;
-            config|list|status|clean|exclusions|marketplace|profile|git-history|git-shallow|update|rollback|completions|logo|help)
+            config|list|status|clean|exclusions|profile|git-history|git-shallow|update|rollback|completions|logo|help)
                 COMMAND="$1"
                 shift
                 REMAINING_ARGS=("$@")
@@ -778,7 +777,7 @@ parse_assistant_args() {
                 done
                 
                 # Check for common dispatcher commands used incorrectly
-                if [[ "$1" == "exclusions" || "$1" == "marketplace" || "$1" == "profile" || "$1" == "config" || "$1" == "list" || "$1" == "status" || "$1" == "clean" ]]; then
+                if [[ "$1" == "exclusions" || "$1" == "profile" || "$1" == "config" || "$1" == "list" || "$1" == "status" || "$1" == "clean" ]]; then
                     echo "Error: '$1' is a system command, not an assistant command" >&2
                     echo "" >&2
                     echo "For system commands, use the dispatcher:" >&2

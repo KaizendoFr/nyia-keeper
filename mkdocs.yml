@@ -51,23 +51,24 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Why Nyia: WHY.md
+  - How it compares: COMPARISON.md
   - Getting Started:
       - Quick Start: QUICKSTART.md
       - Requirements: REQUIREMENTS.md
       - Installation: INSTALLATION.md
-      - Choosing an Assistant: CHOOSING_AN_ASSISTANT.md
   - Features:
       - Branch Management: BRANCH_MANAGEMENT.md
       - Profiles (accounts & personas): PROFILES.md
       - Workspace Mode: WORKSPACE.md
       - Team Sharing: TEAM_SHARING.md
-      - Marketplace: MARKETPLACE.md
       - Mount Exclusions: MOUNT_EXCLUSIONS.md
       - Flavors & Overlays: USER_GUIDE_FLAVORS_OVERLAYS.md
       - Git History Cutoff: GIT_HISTORY_CUTOFF.md
       - Network Egress:
           - Overview: NETWORK_EGRESS.md
           - Test Sidecar Access: SIDECAR_ACCESS.md
+  - Security model: THREAT_MODEL.md
   - Setup:
       - macOS: MACOS_SETUP.md
       - Windows (WSL2): WSL2_SETUP.md

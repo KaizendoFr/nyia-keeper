@@ -20,6 +20,23 @@ nyia config project network_egress_policy=off
 default `off`, validated, and visible in `nyia config view`. It follows normal scope
 precedence (CLI → project → global → team → default).
 
+## What the default (`off`) does — and doesn't — cover
+
+The container keeps the assistant off your **filesystem** (that's the box — see
+[Why Nyia Keeper](WHY.md)); the network is a **separate axis**. With `network_egress_policy=off`
+(the default) the container has ordinary outbound access, so know the two things it does **not** stop:
+
+- **Exfiltration.** Anything inside the container (your project, minus [excluded
+  files](MOUNT_EXCLUSIONS.md)) can in principle be sent out — `curl`, a package post-install hook, a
+  `git push`. Excluding secrets shrinks *what* can leak; egress control shrinks *where* it can go.
+- **Local-network reach.** The container can reach your LAN, services on your host, and cloud metadata
+  (`169.254.169.254`). On **native Linux the default is `--network host`** (see below), so loopback and
+  the whole LAN are reachable — a prompt-injected "test the API" can become lateral movement.
+
+Turn on `restrict-local` when that matters (corporate network, sensitive repo, cloud VM). Note the
+**enforcement is Linux / nftables-based**; on macOS/WSL2 the network mode already uses a bridge, but the
+firewall variant differs — see the Phase A/B notes below.
+
 ## What restrict-local does (Phase A: network substrate)
 
 Today, native-Linux launches use `--network host` — the container shares the host's
