@@ -35,7 +35,7 @@ nyia-claude --list-flavors
 |--------|----------------|
 | `python` | pytest, pytest-cov, black, mypy, ruff, isort, ipython |
 | `php` | PHP 8.3, Composer, PHPUnit, PHPStan, PHP-CS-Fixer |
-| `node` | Node.js 22, yarn, pnpm, typescript, biome, vitest, vite, storybook, cypress (headless Chromium), expo-cli, eas-cli |
+| `node` | Node.js 22, yarn, pnpm, typescript, biome, vitest, vite, storybook, cypress (headless Chromium), Expo (via `npx expo`), eas-cli |
 | `php-react` | PHP 8.2 + React + Storybook + Jest + Cypress + PHPUnit (fullstack) |
 | `rust-tauri` | Rust, Cargo, Tauri v2 CLI, clippy, rustfmt, cargo-watch, Node.js 22 |
 

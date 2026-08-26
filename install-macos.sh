@@ -24,7 +24,7 @@ PUBLIC_REPO="KaizendoFr/nyia-keeper"
 TARBALL_NAME="nyiakeeper-runtime.tar.gz"
 MIN_MACOS_VERSION="13"
 # Replaced at build time by preprocess-runtime.sh (same pattern as install.sh)
-RELEASE_TAG="v0.1.0-beta.3"
+RELEASE_TAG="v0.1.0-beta.4"
 
 # --- Version / Channel resolution ---
 #
@@ -599,8 +599,32 @@ ${CYAN}│${NC}   ${BOLD}First time setup for Claude:${NC}                      
 ${CYAN}│${NC}      ${CYAN}nyia-claude --login${NC}                                 ${CYAN}│${NC}
 ${CYAN}│${NC}                                                          ${CYAN}│${NC}"
     echo ""
+
+    # --- End-of-install Docker check (Plan 323) ---
+    # Re-state Docker status as a clear, actionable end-of-install message, consistent
+    # with the Linux public-install.sh check and the library helpers
+    # check_docker_available / check_docker_running in bin/common-functions.sh (source
+    # of truth). The up-front check in main() normally guarantees Docker is running by
+    # now; this covers the edge case where the user quit Docker mid-install. Non-fatal.
+    local docker_status=0
+    check_docker || docker_status=$?
+    case $docker_status in
+        0)
+            print_success "Docker is installed and running"
+            ;;
+        1)
+            print_warning "Docker Desktop is installed but not running"
+            print_info "Start Docker Desktop, then run: nyia list"
+            ;;
+        2)
+            print_warning "Docker Desktop is not installed — Nyia Keeper needs it to run"
+            print_info "Install: https://www.docker.com/products/docker-desktop/"
+            print_info "Full setup: https://nyia-keeper.com"
+            ;;
+    esac
+
+    echo ""
     echo "Requirements to run:"
-    echo "  • Docker Desktop running"
     echo "  • Launch inside a Git repo (--skip-checks to bypass)"
     echo "  • Full requirements & setup: https://nyia-keeper.com"
 }

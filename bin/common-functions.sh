@@ -4515,6 +4515,18 @@ EOF
 list_assistant_images() {
     local base_image_name="$1"
 
+    # Docker is required to list images. Route the "Docker absent" case through the
+    # shared friendly-message helper (Plan 323) so the user gets one clear, actionable
+    # message instead of a misleading "No images found" silent-empty result. Without
+    # this gate, `docker images ... 2>/dev/null` swallows the error and the else-branch
+    # below prints a build hint that makes no sense when Docker itself is missing.
+    # ensure_docker_ready is the run/login preflight helper (CLI present AND daemon reachable),
+    # so a daemon-down box also gets the friendly "Cannot connect to the Docker daemon" message
+    # instead of a misleading "No images found" (Plan 323 review — daemon-down was in-scope).
+    if ! ensure_docker_ready; then
+        return 1
+    fi
+
     # Strip nyiakeeper- prefix to match actual image names
     local clean_name="${base_image_name#nyiakeeper-}"
     local search_pattern="nyiakeeper/${clean_name}"

@@ -135,7 +135,7 @@ if [[ "$RELEASE_TYPE" == channel:* ]]; then
         echo "❌ Could not resolve channel '$CHANNEL_NAME' from manifest"
         echo "   Manifest URL: $CHANNELS_MANIFEST_URL"
         echo "   Falling back to newest published release..."
-        RELEASE_TYPE="tags/v0.1.0-beta.3"
+        RELEASE_TYPE="tags/v0.1.0-beta.4"
     else
         echo "📦 Channel '$CHANNEL_NAME' resolved to: $TAG_NAME"
     fi
@@ -234,9 +234,39 @@ echo "Next steps:"
 echo "1. Add ~/.local/bin to your PATH if not already done"
 echo "2. Run: nyia list"
 echo "3. Configure an assistant: nyia-claude --login"
+
+# --- End-of-install Docker check (Plan 323) ---
+# The bootstrap installer does NOT source the library, so this is self-contained. It
+# mirrors check_docker_available / check_docker_running in bin/common-functions.sh
+# (the source of truth) so install-time and command-time wording stay consistent.
+# Non-fatal: the user may add Docker afterward. WSL1 is already rejected at the top of
+# this script, so only two failure states remain here — CLI missing, or daemon down.
+_nyia_check_docker() {
+    if ! command -v docker >/dev/null 2>&1; then
+        echo ""
+        echo "⚠️  Docker is not installed — Nyia Keeper needs it to run."
+        echo "   Install Docker:"
+        echo "     curl -fsSL https://get.docker.com -o get-docker.sh && sh get-docker.sh"
+        echo "     Or visit: https://docs.docker.com/get-docker/"
+        echo "   Full setup: https://nyia-keeper.com"
+        return 0
+    fi
+    if ! docker info >/dev/null 2>&1; then
+        echo ""
+        echo "⚠️  Docker is installed but the daemon is not reachable (not running, or permission denied)."
+        echo "   Start Docker:  sudo systemctl start docker    # or: sudo service docker start"
+        echo "   If Docker IS running, add your user to the 'docker' group:"
+        echo "     sudo usermod -aG docker \$USER    # then log out/in (or: newgrp docker)"
+        echo "   Full setup: https://nyia-keeper.com"
+        return 0
+    fi
+    echo ""
+    echo "✅ Docker is installed and running."
+    return 0
+}
+_nyia_check_docker
+
 echo ""
 echo "Requirements to run:"
-echo "  • Docker running + your user in the 'docker' group"
-echo "      (if not: sudo usermod -aG docker \$USER, then log out/in)"
 echo "  • Git installed; launch inside a Git repo (--skip-checks to bypass)"
 echo "  • Full requirements & per-OS setup: https://nyia-keeper.com"
