@@ -83,6 +83,12 @@ NYIA_LEGACY_STATUS_SUNSET="2026-12-31"   # decision point to remove legacy-Statu
 _map_legacy_status() {
     local v; v="$(tr '[:upper:]' '[:lower:]' <<<"$1")"   # here-string (no pipe) → set -e safe; portable lowercasing
     case "$v" in
+        # Plan 336: NEGATIONS FIRST, and leading-token matches only — verified against real plans: 330's
+        # "still a DRAFT (not implemented); …" must not become Done via *implemented*, and 94a's
+        # "ANALYZED - DECISION REQUIRED" is a pending decision (Draft), not a finished plan.
+        *"not implemented"*|*unimplemented*|*"not complete"*|*incomplete*|*"not done"*|*"not finished"*) printf 'Draft' ;;
+        implemented*|closed*)                                            printf 'Done' ;;
+        analyzed*|planning*)                                             printf 'Draft' ;;
         *complete*|*done*|*finished*|*shipped*|*merged*)                 printf 'Done' ;;
         *"in progress"*|*inprogress*|*partial*|*wip*|*active*|*doing*|*ongoing*) printf 'Active' ;;
         *blocked*|*waiting*|*stuck*)                                     printf 'Blocked' ;;
@@ -96,7 +102,8 @@ _map_legacy_status() {
 
 # read_plan_status <plan_file> — print the plan's Status to stdout (warnings to stderr):
 #   missing file  -> "Draft" + return 2 ;  missing field -> "Draft" + return 0 ;
-#   invalid value -> print the raw value + return 1.
+#   invalid value -> print "Draft" + return 1 (Plan 336: NEVER the raw value — both consumers, the inventory
+#                    and the status backfill, ignore rc and would render/stamp garbage like "Status: the").
 # Recognizes the canonical `Status: <enum>` AND (temporary) legacy `## Status:` / `**Status**:` / free-text.
 read_plan_status() {
     local f="$1" val="" first mapped in_fence=0 line
@@ -123,7 +130,7 @@ read_plan_status() {
         printf 'note: mapped legacy Status "%s" -> %s in %s (run `nyia plans status-backfill`)\n' "$val" "$mapped" "$f" >&2
         return 0
     fi
-    printf '%s\n' "$first"
+    printf 'Draft\n'   # 336: the field-only fallback; the warning + rc 1 still flag the file for repair
     printf 'warning: invalid Status "%s" in %s\n' "$first" "$f" >&2; return 1
 }
 

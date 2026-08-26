@@ -69,8 +69,23 @@ plans_migrate() {
     esac
     local layout; layout="$(detect_plan_layout "$dir")"
     case "$layout" in
-        new)   printf 'Plans already use the per-plan layout (.layout-v2 present). Nothing to do.\n'; return 0 ;;
         empty) printf 'No plans to migrate.\n'; return 0 ;;
+        new)
+            # Plan 336 (R5): `new` is what the detector says once every BODY is in a dir — it does NOT mean the
+            # migration finalized (a partial run writes no marker, and letter-prefixed leftovers are invisible
+            # to the detector). ONE rule: nothing to do iff .layout-v2 is present AND the planner has nothing
+            # to move; otherwise finalize/route through the very same executor (backup → verify → markers).
+            local _plan_lines _moves=0
+            _plan_lines="$(plan_migration "$dir")" || { printf 'migration planner failed\n' >&2; return 1; }
+            _moves="$(printf '%s\n' "$_plan_lines" | grep -c $'^MOVE\t')" || true   # grep -c exits 1 on zero matches
+            if [[ "$mode" != "dry" && -f "$dir/$NYIA_LAYOUT_MARKER" && "$_moves" -eq 0 ]]; then   # --dry-run always shows the plan (orphans too)
+                printf 'Plans already use the per-plan layout (.layout-v2 present). Nothing to do.\n'; return 0
+            fi
+            if [[ ! -f "$dir/$NYIA_LAYOUT_MARKER" ]]; then
+                printf 'Per-plan layout found, but the migration was never finalized (.layout-v2 absent — an earlier run stopped early).\n'
+            fi
+            [[ "$_moves" -gt 0 ]] && printf '%s flat file(s) can still be routed into their plan dirs.\n' "$_moves"
+            ;;
     esac
     if [[ "$mode" == "dry" ]]; then
         printf 'Dry run — the following would be migrated (no changes made):\n'
@@ -78,13 +93,18 @@ plans_migrate() {
         return 0
     fi
     if [[ "$mode" == "confirm" ]]; then
-        printf 'Legacy plan layout detected — migrate to the new per-plan directory layout?\n'
+        if [[ "$layout" == "new" ]]; then
+            printf 'Finalize the migration now (route the leftovers, write the layout markers)?\n'
+        else
+            printf 'Legacy plan layout detected — migrate to the new per-plan directory layout?\n'
+        fi
         printf 'A full backup will be made first. [y/N] '
         local reply=""; IFS= read -r reply || reply=""
         mark_migration_asked "$dir"                          # asked once, whatever the answer
         case "$reply" in
             y|Y|yes|YES|Yes) ;;
-            *) printf 'Skipped. Plans stay flat; re-offer any time with: nyia plans migrate\n'; return 0 ;;
+            *) if [[ "$layout" == "new" ]]; then printf 'Skipped. Nothing changed (markers not written); re-run any time with: nyia plans migrate\n'
+               else printf 'Skipped. Plans stay flat; re-offer any time with: nyia plans migrate\n'; fi; return 0 ;;
         esac
     fi
     execute_migration "$dir"
@@ -135,7 +155,11 @@ maybe_offer_plan_migration() {
             local _erc=0
             execute_migration "$dir" >&2 || _erc=$?
             if [[ "$_erc" -eq 0 ]]; then
-                printf '\nMigration complete — starting %s on the new layout.\n' "$launch_hint" >&2
+                if [[ -f "$dir/migration-notes.md" ]]; then   # Plan 336 (M6): orphans/fallback routes are not "complete, all moved"
+                    printf '\nMigration complete — see %s for what was routed by fallback or left flat — starting %s on the new layout.\n' "$dir/migration-notes.md" "$launch_hint" >&2
+                else
+                    printf '\nMigration complete — starting %s on the new layout.\n' "$launch_hint" >&2
+                fi
                 return 0
             fi
             printf '\nMigration did not fully complete (some files were left flat; a full backup was made).\n' >&2
@@ -157,6 +181,14 @@ handle_plans_command() {
         status)
             local _lay; _lay="$(detect_plan_layout "$plans_dir")"
             printf 'Plan layout: %s\n  (%s)\n' "$_lay" "$plans_dir"
+            # Plan 336 (R5): the launch never nags on `new`, so this is the user's only signal that a
+            # migration stopped early (no .layout-v2) — say so, and point at the finalize command.
+            if [[ "$_lay" == "new" && ! -f "$plans_dir/$NYIA_LAYOUT_MARKER" ]]; then
+                printf '  not finalized — .layout-v2 absent (an earlier migration stopped early); run `nyia plans migrate` to finish.\n'
+            fi
+            if [[ -f "$plans_dir/migration-notes.md" ]]; then   # `if`, not `&&`: a bare && as the arm's last command would return 1
+                printf '  notes: %s (reviews routed by fallback / left flat)\n' "$plans_dir/migration-notes.md"
+            fi
             # Detector (331b fold): on an already-migrated store, flag plans missing an explicit Status field
             # so the user knows to run status-backfill (migrating projects get it auto during `migrate`).
             if [[ "$_lay" == "new" ]]; then
@@ -167,7 +199,9 @@ handle_plans_command() {
                         [[ -f "$_p" ]] || continue
                         _plan_has_explicit_status "$_p" 2>/dev/null || _un=$(( _un + 1 ))
                     done
-                    [[ "$_un" -gt 0 ]] && printf '\n%s plan(s) lack an explicit Status: field — run `nyia plans status-backfill` to add one.\n' "$_un"
+                    if [[ "$_un" -gt 0 ]]; then   # `if`, not `&&` (336): as the arm's last command a false && returned 1 → `nyia plans status` exit 1
+                        printf '\n%s plan(s) lack an explicit Status: field — run `nyia plans status-backfill` to add one.\n' "$_un"
+                    fi
                 fi
             fi ;;
         decisions)
@@ -192,8 +226,8 @@ handle_plans_command() {
             handle_todo_command "$@" ;;
         help|--help|-h)
             printf 'Usage: nyia plans <command>\n\n'
-            printf '  migrate [--dry-run|--yes]         Migrate flat plans/NNN-*.md to per-plan dirs (full backup first)\n'
-            printf '  status                            Show the detected plan layout (empty|new|legacy|mixed)\n'
+            printf '  migrate [--dry-run|--yes]         Migrate flat plans/NNN-*.md to per-plan dirs, or finalize a migration that stopped early (full backup first)\n'
+            printf '  status                            Show the detected plan layout (empty|new|legacy|mixed) and whether the migration is finalized\n'
             printf '  todo [--write]                    The generated plan inventory (alias of `nyia todo`)\n'
             printf '  status-backfill [--yes]           Write a canonical Status: into plans that lack one (dry-run default)\n'
             printf '  decisions [N] [--by X] [--since]  Show recorded decisions for plan N (or all plans)\n'

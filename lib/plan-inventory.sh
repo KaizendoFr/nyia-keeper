@@ -166,19 +166,57 @@ _plan_has_status_line() {
 #   and (apply=1) insert it right after the first line (atomic). Prints "<action>\t<status>\t<file>".
 #   TEMPORARY migration aid — see the legacy-Status sunset in plan-resolution.sh.
 backfill_plan_status() {
-    local f="$1" apply="${2:-0}" s tmp first
-    if _plan_has_explicit_status "$f" 2>/dev/null; then printf 'skip\t-\t%s\n' "$f"; return 0; fi
-    s="$(derive_plan_status "$f")"
+    local f="$1" apply="${2:-0}" s tmp first second cr="" fix_line=0 i cand stamp_tok=""
+    # Plan 336 (R6): a PREVIOUS backfill may have stamped a non-enum token (`Status: the`, from a prose
+    # line's first word) at line 1 or 2 — REPLACE that line instead of inserting a second Status. Only the
+    # stamped shape qualifies: a single-token `^Status: X$` (CR-tolerant), invalid, on line 1–2, and not
+    # inside a fence (line 1 is a fence opener). Prose `Status: …` lines are never touched.
+    # Scanned BEFORE the explicit-status short-circuit (336 review): read_plan_status is first-match, so a
+    # stamped invalid line wins over a valid `Status:` further down and must be repaired even then.
+    { IFS= read -r first || true; IFS= read -r second || true; } < "$f"
+    if [[ "${first%$'\r'}" != '```'* ]]; then
+        for i in 1 2; do
+            cand="$first"; [[ $i -eq 2 ]] && cand="$second"
+            cr=""; [[ "$cand" == *$'\r' ]] && { cr=$'\r'; cand="${cand%$'\r'}"; }
+            if [[ "$cand" =~ ^Status:[[:space:]]+([^[:space:]]+)$ ]] && ! validate_plan_status "${BASH_REMATCH[1]}"; then
+                fix_line=$i; stamp_tok="${BASH_REMATCH[1]}"; break
+            fi
+        done
+    fi
+    if [[ "$fix_line" -eq 0 ]] && _plan_has_explicit_status "$f" 2>/dev/null; then printf 'skip\t-\t%s\n' "$f"; return 0; fi
+    if [[ "$fix_line" -gt 0 ]]; then
+        # Derive from the file WITHOUT the stamped line: the next Status: line (the legacy original, or a
+        # valid one someone added later) is the truth; the stamp itself carries no information.
+        local view; view="$(mktemp)" || return 1
+        sed "${fix_line}d" "$f" > "$view" 2>/dev/null || { rm -f "$view"; return 1; }
+        if _plan_has_status_line "$view"; then
+            s="$(derive_plan_status "$view")" || true
+        else
+            s="$(_map_legacy_status "$stamp_tok")"   # the stamp is the ONLY status information left — map it
+        fi
+        rm -f "$view"
+    else
+        s="$(derive_plan_status "$f")" || true       # 336: an invalid value yields Draft (rc 1) — never the raw word
+    fi
+    [[ -n "$s" ]] || s="Draft"
     if [[ "$apply" == "1" ]]; then
         tmp="$(mktemp "${f}.XXXXXX")" || return 1
+        if [[ "$fix_line" -gt 0 ]]; then
+            # In-place: everything before the stamped line, the repaired line (CR preserved), everything after.
+            if { [[ $fix_line -eq 2 ]] && printf '%s\n' "$first"; printf 'Status: %s%s\n' "$s" "$cr"; tail -n +$(( fix_line + 1 )) "$f"; } > "$tmp" && mv -f "$tmp" "$f"; then
+                printf 'fixed\t%s\t%s\n' "$s" "$f"; return 0
+            fi
+            rm -f "$tmp"; return 1
+        fi
         # F1: `IFS= read` returns non-zero at EOF on a no-trailing-newline file even though it populated
         # $first — the old `&& printf` then DROPPED that line (data loss on a single-line stub). Emit it
         # whenever non-empty, independent of read's exit status; an empty file still gets no leading blank.
-        { IFS= read -r first < "$f" || true; [[ -n "$first" ]] && printf '%s\n' "$first"; printf 'Status: %s\n' "$s"; tail -n +2 "$f"; } > "$tmp" \
-            && mv -f "$tmp" "$f" || { rm -f "$tmp"; return 1; }
-        printf 'wrote\t%s\t%s\n' "$s" "$f"
+        if { [[ -n "$first" ]] && printf '%s\n' "$first"; printf 'Status: %s\n' "$s"; tail -n +2 "$f"; } > "$tmp" && mv -f "$tmp" "$f"; then
+            printf 'wrote\t%s\t%s\n' "$s" "$f"; return 0
+        fi
+        rm -f "$tmp"; return 1
     else
-        printf 'would-write\t%s\t%s\n' "$s" "$f"
+        if [[ "$fix_line" -gt 0 ]]; then printf 'would-fix\t%s\t%s\n' "$s" "$f"; else printf 'would-write\t%s\t%s\n' "$s" "$f"; fi
     fi
 }
 

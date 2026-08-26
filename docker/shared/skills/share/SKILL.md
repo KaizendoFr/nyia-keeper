@@ -6,8 +6,10 @@ description: "Promote/Demote Plans Between Private and Shared"
 # Share - Promote/Demote Plans Between Private and Shared
 
 Move plans (and their review files) between `.nyiakeeper/plans/` (private, gitignored)
-and `.nyiakeeper/shared/plans/` (team-visible, committed to git). Also supports
-sharing a snapshot of `todo.md`.
+and `.nyiakeeper/shared/plans/` (team-visible, committed to git). A plan is a DIRECTORY
+`{N}-{slug}/` (`plan.md` + `reviews/` + `decisions.md`) — move it whole; legacy flat
+`{N}-{slug}.md` plans travel with their loose review files. Also supports sharing a
+snapshot of `todo.md`.
 
 ## A) Argument Parsing
 
@@ -24,7 +26,8 @@ subcommand:
 
 ## B) `/share plan <N>`
 
-1. **Resolve** plan file: find `.nyiakeeper/plans/{N}-*.md` (exclude `pair-review-*`,
+1. **Resolve** plan: find `.nyiakeeper/plans/{N}-*/plan.md` (a per-plan directory), else
+   the legacy flat file `.nyiakeeper/plans/{N}-*.md` (exclude `pair-review-*`,
    `plan-review-*`, `code-review-*` files).
    - If not found in `plans/`, check if already in `shared/plans/` — if so, print
      "Plan {N} is already shared" and stop.
@@ -32,9 +35,11 @@ subcommand:
 
 2. **Create** `.nyiakeeper/shared/plans/` if it doesn't exist.
 
-3. **Move plan file** from `plans/` to `shared/plans/`.
+3. **Move the plan** from `plans/` to `shared/plans/`: the whole directory `{N}-{slug}/`
+   (plan.md, reviews/, decisions.md) — or, for a legacy flat plan, the single file.
 
-4. **Move associated review files** matching any of these patterns in `plans/`:
+4. **Move associated review files** (legacy flat plans only — a directory already carries its
+   `reviews/`) matching any of these patterns in `plans/`:
    - `pair-review-*-plan-{N}-*.md`
    - `plan-review-*-plan-{N}-*.md`
    - `code-review-plan-{N}*.md`
@@ -54,14 +59,15 @@ subcommand:
 
 ## C) `/unshare plan <N>`
 
-1. **Resolve** plan file: find `.nyiakeeper/shared/plans/{N}-*.md` (exclude review files).
+1. **Resolve** plan: find `.nyiakeeper/shared/plans/{N}-*/plan.md` (a per-plan directory),
+   else the legacy flat file `.nyiakeeper/shared/plans/{N}-*.md` (exclude review files).
    - If not found in `shared/plans/`, check if already in `plans/` — if so, print
      "Plan {N} is already private" and stop.
    - If not found in either location, print "Plan {N} not found" and stop.
 
-2. **Move plan file** from `shared/plans/` back to `plans/`.
+2. **Move the plan** (whole directory, or the legacy flat file) from `shared/plans/` back to `plans/`.
 
-3. **Move associated review files** (same patterns as share, from `shared/plans/` to `plans/`).
+3. **Move associated review files** (legacy flat plans only; same patterns as share, from `shared/plans/` to `plans/`).
 
 4. **Rewrite todo.md reference**: find any line containing `Plan: shared/plans/{N}-` and
    replace with `Plan: plans/{N}-` (preserving the rest of the filename).
@@ -87,16 +93,16 @@ subcommand:
 
 ## F) `/share list`
 
-1. **Scan** `.nyiakeeper/shared/plans/` for plan files (exclude review files:
-   `pair-review-*`, `plan-review-*`, `code-review-*`).
+1. **Scan** `.nyiakeeper/shared/plans/` for plans — directories `NNN-*/` with a `plan.md`, and
+   legacy flat plan files (exclude review files: `pair-review-*`, `plan-review-*`, `code-review-*`).
 2. **Check** whether `.nyiakeeper/shared/todo.md` exists.
 3. **Print summary**:
    ```
    Shared artifacts:
 
    Plans (N shared):
-     - 234-feature-auth.md
-     - 235-fix-paths.md
+     - 234-feature-auth/
+     - 235-fix-paths.md   (legacy flat)
 
    Todo: shared  (or "Todo: not shared")
    ```
@@ -105,7 +111,7 @@ subcommand:
 ## G) Key Rules
 
 - **Plans are private by default** — `/share` is an explicit publish action.
-- **Review files travel with their plan** — never split plan from its reviews.
+- **Review files travel with their plan** — never split plan from its reviews (a plan directory carries them in `reviews/`).
 - **Todo is a snapshot copy** — private todo.md remains the working copy.
 - **Todo.md paths are rewritten** on share/unshare to keep omitted-argument workflows working.
 - **Context.md is never shared** — it contains per-assistant session state.

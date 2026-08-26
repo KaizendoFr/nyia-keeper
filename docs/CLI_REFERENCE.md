@@ -202,8 +202,8 @@ command is `nyia plans` (plural).
 
 | Command | Description |
 |---------|-------------|
-| `nyia plans migrate [--dry-run\|--yes]` | Migrate flat `plans/NNN-*.md` to per-plan directories (a full backup is made first) |
-| `nyia plans status` | Show the detected plan layout (`empty` \| `new` \| `legacy` \| `mixed`) |
+| `nyia plans migrate [--dry-run\|--yes]` | Migrate flat `plans/NNN-*.md` to per-plan directories, or finalize a migration that stopped early (a full backup is made first). Reviews whose plan number has no body are routed to the nearest exact plan or left flat and named in `plans/migration-notes.md` — they never block |
+| `nyia plans status` | Show the detected plan layout (`empty` \| `new` \| `legacy` \| `mixed`) and whether the migration is finalized (`.layout-v2`) |
 | `nyia plans todo [--write]` | The generated plan inventory (alias of `nyia todo`) |
 | `nyia plans status-backfill [--yes]` | Write a canonical `Status:` into plans that lack one (dry-run by default) |
 | `nyia plans decisions [N] [--by X] [--since]` | Show recorded decisions for plan N (or all plans) |

@@ -19,7 +19,7 @@ subcommand:
   "respond"          → RESPOND MODE (plan author reads review, discusses, updates plan)
 
 plan-ref:
-  Number (e.g., "121")     → find .nyiakeeper/plans/121-*.md, then .nyiakeeper/shared/plans/121-*.md (exclude plan-review-* and pair-review-* files). Private wins if found in both.
+  Number (e.g., "121")     → find the plan's directory .nyiakeeper/plans/121-*/plan.md (per-plan layout; its reviews/ and decisions.md sit beside it), then legacy flat .nyiakeeper/plans/121-*.md, then the same two shapes under .nyiakeeper/shared/plans/ (exclude plan-review-*, pair-review-* and code-review-* files). Private wins if found in both.
   File path                → use directly
 
 lens (optional — plan mode only, shapes review perspective):
@@ -32,8 +32,8 @@ lens (optional — plan mode only, shapes review perspective):
 
 ## B) Load Context (both modes)
 
-1. Resolve plan-ref to an actual plan file. Search `.nyiakeeper/plans/` first, then `.nyiakeeper/shared/plans/` as fallback. Read it completely.
-2. Find review files matching: `plan-review-*-plan-{N}-*.md` OR `pair-review-*-plan-{N}-*.md` in the same directory as the plan file (review files live next to their plan)
+1. Resolve plan-ref to an actual plan file (`{N}-{slug}/plan.md` first, legacy flat `{N}-{slug}.md` as fallback). Search `.nyiakeeper/plans/` first, then `.nyiakeeper/shared/plans/` as fallback. Read it completely.
+2. Find review files matching: `plan-review-*-plan-{N}-*.md` OR `pair-review-*-plan-{N}-*.md` in the plan's `reviews/` directory (`.nyiakeeper/plans/{N}-{slug}/reviews/`); for a legacy flat plan, in the same directory as the plan file. `nyia plans migrate` moved the old flat reviews into `reviews/`.
 3. Determine round number: count `## Round` headers in existing review file. Next = count + 1. No file = Round 1.
 4. Identify yourself (your assistant name) from context or environment.
 
@@ -85,7 +85,7 @@ When reviewing a meta-plan, also check:
 Output one review file with per-subplan sections plus a cross-cutting section.
 
 Discuss findings with the human before writing.
-Write to: `.nyiakeeper/plans/plan-review-{me}-for-{target}-plan-{N}-{slug}.md`
+Write to: `.nyiakeeper/plans/{N}-{slug}/reviews/plan-review-{me}-for-{target}-plan-{N}-{slug}.md` (create `reviews/` if missing; for a legacy flat plan, write next to the plan file). Keep exactly this basename convention — the migrator and the `nyia` resolvers key on it.
 
 Use this format:
 ```markdown
@@ -144,7 +144,7 @@ You are the **plan author**. Someone else reviewed your plan.
 
 ### Steps
 
-1. **Find the review**: Look for `plan-review-*-for-{me}-plan-{N}-*.md` or `pair-review-*-for-{me}-plan-{N}-*.md` in both `.nyiakeeper/plans/` and `.nyiakeeper/shared/plans/` (search both prefixes for backward compatibility with existing review files)
+1. **Find the review**: Look for `plan-review-*-for-{me}-plan-{N}-*.md` or `pair-review-*-for-{me}-plan-{N}-*.md` in the plan's `reviews/` directory first (`.nyiakeeper/plans/{N}-{slug}/reviews/`), then flat in `.nyiakeeper/plans/` and `.nyiakeeper/shared/plans/` (search both prefixes for backward compatibility with existing review files)
    - If multiple files match, use most recently modified. If ambiguous, ask the human.
    - If no review found, inform the human and stop.
 
@@ -195,5 +195,5 @@ Default: **architect**. Multiple: `/plan-review plan 213 as risk,user`
 - **Confirmation gate**: In respond mode, NEVER edit the plan without explicit "yes" from the human.
 - **Backward compatible**: `/plan-review 121` (no subcommand) = plan mode.
 - **Delta = LLM comparison**: Compare plan content vs last review content. No git diff needed.
-- **One review file per pair**: `plan-review-{from}-for-{target}-plan-{N}-{slug}.md`. Rounds append to the same file.
+- **One review file per pair**: `plan-review-{from}-for-{target}-plan-{N}-{slug}.md`, living in `plans/{N}-{slug}/reviews/`. Rounds append to the same file.
 - **Legacy file discovery**: Always search for both `plan-review-*` and `pair-review-*` prefixes when looking for existing review files, so that the 120+ existing `pair-review-*` files remain discoverable.

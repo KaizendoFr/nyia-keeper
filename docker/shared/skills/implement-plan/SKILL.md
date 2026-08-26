@@ -18,12 +18,12 @@ Parse the arguments and load the plan:
 /implement-plan <plan-ref>
 
 plan-ref:
-  Number (e.g., "228")     -> find .nyiakeeper/plans/228-*.md, then .nyiakeeper/shared/plans/228-*.md (exclude pair-review-* files). Private wins if found in both.
+  Number (e.g., "228")     -> find the plan's directory .nyiakeeper/plans/228-*/plan.md (per-plan layout), then legacy flat .nyiakeeper/plans/228-*.md, then the same two shapes under .nyiakeeper/shared/plans/ (exclude plan-review-*, pair-review-* and code-review-* files). Private wins if found in both.
   File path                -> use directly
   Omitted                  -> check todo.md for the current Doing task, use its plan (path may point to shared/plans/)
 ```
 
-1. **Resolve** plan-ref to an actual plan file. Read it completely.
+1. **Resolve** plan-ref to an actual plan file (`{N}-{slug}/plan.md`; its `reviews/` and `decisions.md` sit beside it). Read it completely.
 2. **Extract steps** from the `## Implementation Steps` section.
 3. **Detect resume point**: identify which steps are already checked `[x]`. The first
    unchecked `[ ]` step is the resume point. If all steps are checked, inform the user

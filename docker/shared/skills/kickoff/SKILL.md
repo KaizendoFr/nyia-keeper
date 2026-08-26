@@ -13,8 +13,10 @@ When invoked, follow the Context Management Protocol:
    - If `todo.md` doesn't exist but `.nyiakeeper/shared/todo.md` does, use shared as starting point
    - If both exist, use private (working copy) but note shared exists
 2. Read `.nyiakeeper/{assistant}/context.md` - understand where previous session left off
-3. Find and read active plans referenced by in-progress todos — plan paths may point to
-   either `.nyiakeeper/plans/` or `.nyiakeeper/shared/plans/` (follow the path in todo.md).
+3. Find and read active plans referenced by in-progress todos — a plan lives at
+   `.nyiakeeper/plans/{N}-{slug}/plan.md` (per-plan layout; legacy projects may still have flat
+   `.nyiakeeper/plans/{N}-{slug}.md`); plan paths may point to either `.nyiakeeper/plans/` or
+   `.nyiakeeper/shared/plans/` (follow the path in todo.md).
    Also scan `.nyiakeeper/shared/plans/` for active plans not referenced in todo.md.
 4. Inspect git state: `git status`, `git branch --show-current`, `git log -n 5 --oneline`
 

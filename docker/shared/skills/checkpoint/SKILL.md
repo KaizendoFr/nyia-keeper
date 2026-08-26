@@ -61,7 +61,7 @@ Output to user:
 **Files preserving state**:
 - .nyiakeeper/todo.md
 - .nyiakeeper/{assistant}/context.md
-- .nyiakeeper/plans/{active-plan}.md
+- .nyiakeeper/plans/{active-plan}/plan.md (legacy flat: .nyiakeeper/plans/{active-plan}.md)
 
 **Critical context for compaction**:
 - [Key decision or discovery that MUST be preserved]

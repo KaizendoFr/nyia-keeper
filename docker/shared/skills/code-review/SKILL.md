@@ -13,7 +13,7 @@ Review code that was written to implement a plan. Focus on what matters: does it
 /code-review [plan-ref] [--files file1 file2 ...]
 
 plan-ref:
-  Number (e.g., "197")     -> find .nyiakeeper/plans/197-*.md, then .nyiakeeper/shared/plans/197-*.md (exclude pair-review-* files). Private wins if found in both.
+  Number (e.g., "197")     -> find the plan's directory .nyiakeeper/plans/197-*/plan.md (per-plan layout), then legacy flat .nyiakeeper/plans/197-*.md, then the same two shapes under .nyiakeeper/shared/plans/ (exclude plan-review-*, pair-review-* and code-review-* files). Private wins if found in both.
   File path                -> use directly
   Omitted                  -> check todo.md for in-progress task, use its plan (path may point to shared/plans/)
 
@@ -23,7 +23,7 @@ plan-ref:
 
 ## B) Load Context
 
-1. **Find the plan**: Resolve plan-ref to plan file. Search `.nyiakeeper/plans/` first, then `.nyiakeeper/shared/plans/` as fallback. Read it completely. Write code review file next to the plan (same directory).
+1. **Find the plan**: Resolve plan-ref to plan file (`{N}-{slug}/plan.md` first, legacy flat as fallback). Search `.nyiakeeper/plans/` first, then `.nyiakeeper/shared/plans/` as fallback. Read it completely. The code review file goes into the plan's `reviews/` directory (`.nyiakeeper/plans/{N}-{slug}/reviews/`; for a legacy flat plan, next to the plan file).
 2. **Identify changed files**: Use the plan's "Implementation Steps" to find which files were touched. Cross-reference with `git diff --name-only` if available.
 3. **Read the code**: Read each changed file (or the specific sections mentioned in the plan).
 4. **Read existing tests**: Find test files related to the changed code.
@@ -40,11 +40,11 @@ You are a pragmatic code reviewer. Your job:
 2. Read all changed files identified in the plan's Implementation Steps
 3. Cross-reference with `git diff --name-only` output if provided
 4. Review the code using these priorities: correctness, security, robustness, style (in that order)
-5. Write your review to: .nyiakeeper/plans/code-review-plan-{N}.md
+5. Write your review to: .nyiakeeper/plans/{N}-{slug}/reviews/code-review-plan-{N}.md (create reviews/ if missing)
 
 CONSTRAINTS (strictly enforced):
 - You may READ any file in the repository
-- You may WRITE ONLY to .nyiakeeper/plans/code-review-plan-{N}.md
+- You may WRITE ONLY to .nyiakeeper/plans/{N}-{slug}/reviews/code-review-plan-{N}.md
 - Do NOT modify source files, tests, or any other files
 - Do NOT make git commits
 
@@ -66,7 +66,7 @@ Output format for the review file:
 ### Verdict: PASS | PASS WITH FIXES | NEEDS WORK
 ```
 
-After the subagent completes, read `.nyiakeeper/plans/code-review-plan-{N}.md` and present the findings to the user.
+After the subagent completes, read `.nyiakeeper/plans/{N}-{slug}/reviews/code-review-plan-{N}.md` and present the findings to the user.
 
 **Fallback**: If the Task tool is not available, proceed directly to section D using the loaded context.
 

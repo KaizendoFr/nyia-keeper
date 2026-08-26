@@ -31,11 +31,15 @@ When invoked with a goal or context, do the following:
 
 ## B) Produce an Execution Plan File
 
-Create a plan file in `.nyiakeeper/plans/` with name format: `{number}-{slug}.md`
+Create a plan file in `.nyiakeeper/plans/` as a per-plan DIRECTORY: `{number}-{slug}/plan.md`
+(its decision log is `{number}-{slug}/decisions.md`, written by `nyia plans decision add`; reviews
+land in `{number}-{slug}/reviews/`). Never create the legacy flat `{number}-{slug}.md` — the
+`nyia` resolvers, `nyia todo` and the review skills key on the directory shape.
 
 **Plan numbering**: To determine the next plan number, scan BOTH `.nyiakeeper/plans/`
-AND `.nyiakeeper/shared/plans/` for existing plan files. Use the highest number found
-across both locations + 1. This prevents collisions with shared plans.
+AND `.nyiakeeper/shared/plans/` for existing plans — directories `NNN-*/` and any legacy flat
+`NNN-*.md`. Use the highest number found across both locations + 1. This prevents collisions
+with shared plans.
 
 **Required sections (per system prompt):**
 
@@ -102,11 +106,11 @@ Ask the user:
 Write order: subplans first, meta-plan second, todo last.
 
 1. Group steps into logical phases (by file area, dependency, or risk)
-2. Each phase becomes a subplan: `{N}a-{phase-slug}.md`, `{N}b-...`, etc.
+2. Each phase becomes a subplan directory: `{N}a-{phase-slug}/plan.md`, `{N}b-.../plan.md`, etc.
    Downstream commands reference subplans by their full number (e.g., `/plan-review plan 230a`)
 3. Each subplan is a **complete plan** with all required sections
    (Context, Requirements, Approach, Steps, Testing, Risks, DoD, Resume)
-4. After ALL subplans are written, create meta-plan `{N}-meta-{slug}.md` with:
+4. After ALL subplans are written, create meta-plan `{N}-meta-{slug}/plan.md` with:
 
    ```markdown
    # Meta-Plan: {Title}
@@ -118,9 +122,9 @@ Write order: subplans first, meta-plan second, todo last.
 
    | Phase | Plan | Description | Depends On | Status |
    |-------|------|-------------|------------|--------|
-   | A | plans/{N}a-{slug}.md | {summary} | — | Ready |
-   | B | plans/{N}b-{slug}.md | {summary} | A | Ready |
-   | C | plans/{N}c-{slug}.md | {summary} | A | Ready |
+   | A | plans/{N}a-{slug}/plan.md | {summary} | — | Ready |
+   | B | plans/{N}b-{slug}/plan.md | {summary} | A | Ready |
+   | C | plans/{N}c-{slug}/plan.md | {summary} | A | Ready |
 
    ## Execution Order
    - Phase A first (no dependencies)
