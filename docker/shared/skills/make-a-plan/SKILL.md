@@ -39,8 +39,19 @@ across both locations + 1. This prevents collisions with shared plans.
 
 **Required sections (per system prompt):**
 
+Every plan MUST carry a `Status:` field directly under the title, initialized to
+`Status: Draft` (or `Status: Ready` if the user has already approved it). Valid values:
+`Draft Ready Active Blocked Review Done Dropped`. The `nyia todo` inventory is generated
+from these fields — never hand-edit `todo.md`.
+
+Optionally, a plan MAY carry a free-text `Roadmap:` line (e.g. `Roadmap: mvp`, `Roadmap: RC1`) to
+place it on a roadmap axis the user defines — the `/plan-status` view groups by it. Omit it if the
+project doesn't use roadmap milestones; a plan without one is simply "Unlabeled".
+
 ```markdown
 # Plan: [Clear Task Title]
+Status: Draft
+Roadmap: mvp
 
 ## Context
 Why this task is needed and current situation
@@ -150,6 +161,18 @@ workflows, onboarding, or behavior changes.
 **When to skip**: The goal is purely internal — refactoring, performance
 optimization, testing infrastructure, CI/CD pipelines, code cleanup.
 
+## B4) Record Directional Decisions (331c)
+
+When a directional or design decision is made while planning — an approach chosen over
+alternatives, a user's answer to a clarifying question, an option rejected — append it to
+the plan's append-only `decisions.md`:
+
+```
+nyia plans decision add <N> --by <who> --topic ".." --question ".." --decision ".." [--options ".."] [--supersedes <N>]
+```
+
+Log durable / directional / user decisions only — not every trivial step (avoid churn).
+
 ## C) Atomic Step Rules
 
 - Single action per step
@@ -166,10 +189,12 @@ optimization, testing infrastructure, CI/CD pipelines, code cleanup.
 - Run the same tests after implementation
 - If tests fail: behavior changed → update tests, OR regression → fix code
 
-## E) Update todo.md
+## E) Surface the Plan in the Inventory
 
-- Add new task to 📋 Ready section referencing the plan file
-- Format: `- [ ] Task description - Priority: X - Plan: plans/{plan-file}.md`
+- `todo.md` is a generated, read-only inventory (`nyia todo`) built from each plan's
+  `Status:` field — there is nothing to hand-edit there.
+- Setting `Status: Draft` (or `Status: Ready` once the user approves) is what surfaces the
+  plan in the inventory.
 
 ## F) Pre-flight Checklist (before finalizing)
 

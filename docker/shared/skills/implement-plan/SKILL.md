@@ -87,10 +87,14 @@ Wait for user decision before proceeding.
 - If user accepts, create and switch to the branch.
 - If user declines, proceed on the current branch.
 
-### B5) Todo Update
+### B5) Set Plan Status: Active
 
-- Find the plan's entry in `.nyiakeeper/todo.md`.
-- Move it from Ready to Doing (if not already there).
+- Set the plan's `Status:` field to `Active` when implementation starts.
+- **Keep the plan's Status accurate throughout**: `Active` while working, `Blocked` if you
+  hit a blocker (C5), `Done` once all steps complete and verification passes (E). This rides
+  the per-step plan update in C4 — no separate bookkeeping.
+- `todo.md` is a generated inventory (`nyia todo`) built from plan `Status:` fields — never
+  hand-edit it.
 
 ## C) Step Execution Loop
 
@@ -153,6 +157,8 @@ If verification fails:
      3. Abort execution (progress preserved — resume later)
    ```
 4. Wait for user decision.
+5. If this is a hard blocker (cannot proceed without external input), set the plan's
+   `Status: Blocked` so the generated inventory reflects it.
 
 ### C6) Phase Boundary Tests
 
@@ -189,7 +195,8 @@ detection — only newly-failing tests trigger a stop.
 
 ## E) Post-flight Report
 
-After all steps are complete (or execution is stopped), output a structured summary:
+If all steps completed and verification passed, set the plan's `Status: Done`. After all
+steps are complete (or execution is stopped), output a structured summary:
 
 ```
 ## Implementation Report: Plan {N} — {title}
@@ -202,7 +209,7 @@ After all steps are complete (or execution is stopped), output a structured summ
 **Next actions**:
 - [ ] Review changes: `/code-review {N}`
 - [ ] Commit: `git add -p && git commit` (suggested message: {type}({scope}): {plan title})
-- [ ] Update todo.md: move to Done
+- [ ] Confirm the plan's `Status: Done` (the `nyia todo` inventory regenerates from it — do not hand-edit todo.md)
 - [ ] Next plan: {N+1} (if applicable)
 ```
 

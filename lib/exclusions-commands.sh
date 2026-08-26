@@ -1519,7 +1519,7 @@ handle_exclusions_command() {
         status)
             exclusions_status "$@"
             ;;
-        patterns)
+        patterns|pattern)
             exclusions_patterns "$@"
             ;;
         lockdown)

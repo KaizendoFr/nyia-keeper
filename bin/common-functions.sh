@@ -524,7 +524,7 @@ migrate_legacy_nyia_gitignore() {
     if grep -qE '^/?\.nyiakeeper/$' "$gitignore" 2>/dev/null; then
         local tmp; tmp=$(mktemp) || return 0
         if sed -E 's#^/?\.nyiakeeper/$#/.nyiakeeper/*#' "$gitignore" > "$tmp" 2>/dev/null; then
-            mv "$tmp" "$gitignore" && print_status "Repaired legacy '.nyiakeeper/' .gitignore rule -> '/.nyiakeeper/*' so shared/ can be committed (Plan 309)"
+            mv "$tmp" "$gitignore" && print_status "Repaired legacy '.nyiakeeper/' .gitignore rule -> '/.nyiakeeper/*' so shared/ can be committed"
         else
             rm -f "$tmp"
         fi
@@ -3834,6 +3834,9 @@ run_docker_container() {
     if [[ -n "${ENABLE_RAG:-}" ]]; then
         docker_env_args+=(-e ENABLE_RAG="${ENABLE_RAG}")
     fi
+    if [[ -n "${NYIA_RAG_VERBOSE:-}" ]]; then
+        docker_env_args+=(-e NYIA_RAG_VERBOSE="${NYIA_RAG_VERBOSE}")
+    fi
     if [[ -n "${NYIA_RAG_MODEL:-}" ]]; then
         docker_env_args+=(-e NYIA_RAG_MODEL="${NYIA_RAG_MODEL}")
     fi
@@ -4602,7 +4605,7 @@ list_assistant_flavors() {
     fi
 
     echo ""
-    echo "Custom local selectors (Plan 266 — built with --build-custom-image):"
+    echo "Custom local selectors (built with --build-custom-image):"
     echo "  custom          - local default-base custom overlay image"
     echo "  <flavor>-custom - local custom image built from <flavor> (e.g. php-custom, php-react-custom)"
     echo ""

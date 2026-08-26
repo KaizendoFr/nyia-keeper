@@ -176,7 +176,7 @@ validate_config_value() {
             # Plan 278 v1: a date (YYYY-MM-DD) or a tag/ref — NOT a bare commit SHA
             # (git --shallow-exclude rejects bare SHAs; see plan review M2). Empty = unset.
             if [[ -n "$value" && "$value" =~ ^[0-9a-fA-F]{7,40}$ ]]; then
-                echo "Error: git_history_cutoff must be a date (YYYY-MM-DD) or a tag, not a commit SHA (Plan 278 v1)." >&2
+                echo "Error: git_history_cutoff must be a date (YYYY-MM-DD) or a tag, not a commit SHA." >&2
                 return 1
             fi
             ;;

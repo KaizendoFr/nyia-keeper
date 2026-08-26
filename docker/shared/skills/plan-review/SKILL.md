@@ -165,6 +165,14 @@ You are the **plan author**. Someone else reviewed your plan.
 
 5. **Update the plan**: Only after confirmation, edit the plan file with agreed changes.
    Add at the bottom of the plan: `## Updates after Round {N} review\n- [summary of changes]`
+   - **Status**: a plan under review carries `Status: Review`. Once the agreed changes are
+     applied and the plan is approved / ready to implement, set its `Status: Ready`.
+   - **Record decisions (331c)**: each recommendation you accepted, rejected, or deferred is
+     a decision — append it to the plan's append-only `decisions.md`:
+     ```
+     nyia plans decision add {N} --by <who> --topic ".." --question ".." --decision "accepted|rejected|deferred: .." [--options ".."] [--supersedes <N>]
+     ```
+     Use `--supersedes <N>` when the call reverses an earlier decision.
 
 6. **Guide next step**: Tell the human:
    "Plan updated. To continue the review cycle, run `/plan-review plan {N}` on {reviewer}'s side."

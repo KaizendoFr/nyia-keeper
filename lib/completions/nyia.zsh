@@ -18,6 +18,10 @@ _nyia() {
     commands=(
         'config:Configuration management (list, dump, view, get)'
         'exclusions:Manage mount exclusions for security'
+        'profile:Manage per-assistant auth profiles'
+        'git-history:Manage the git-history cutoff'
+        'plans:Plan tracking (migrate, status, decisions, backfill)'
+        'todo:Show the generated plan inventory'
         'update:Update management (status, list, check, install)'
         'list:List all available assistants'
         'status:Show global Nyia Keeper status'

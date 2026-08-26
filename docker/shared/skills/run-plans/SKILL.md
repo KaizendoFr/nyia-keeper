@@ -51,7 +51,7 @@ Get user approval before proceeding.
 Before any execution:
 1. Verify clean git state (`git status` — no uncommitted changes)
 2. Capture current branch name (restore point)
-3. Confirm all plans are in Ready state in todo.md
+3. Confirm each plan has `Status: Ready` in its `plans/NNN-slug/plan.md` (run `nyia todo` to see the inventory)
 4. If dirty worktree or uncommitted changes, STOP and ask user to commit or stash
 
 ## E) Execute
@@ -78,7 +78,9 @@ If a subagent fails mid-batch:
 ## F) Post-Execution
 
 - Run final verification (full test suite or equivalent)
-- Update todo.md: move completed plans from Ready → Done
+- Maintain each plan's `Status:` in its `plan.md` as you go — `Active` when it starts, `Done` when it
+  completes, `Blocked` on a blocker. The `nyia todo` inventory is GENERATED from these fields; never hand-edit
+  `todo.md`.
 - Update context.md with batch execution summary
 - Report results:
 

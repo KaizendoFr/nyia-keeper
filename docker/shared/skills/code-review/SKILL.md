@@ -167,9 +167,12 @@ Present findings in this structure:
 
 ## G) After Review
 
-1. **If PASS**: Tell the user the code is ready. Update plan status if applicable.
-2. **If PASS WITH FIXES**: List the specific fixes needed. Offer to implement must-fix items.
-3. **If NEEDS WORK**: Explain what needs to change and why. Reference plan requirements.
+1. **If PASS**: Tell the user the code is ready. Set the plan's `Status: Done` in its `plan.md` (the
+   `nyia todo` inventory regenerates from it — never hand-edit `todo.md`).
+2. **If PASS WITH FIXES**: List the specific fixes needed. Offer to implement must-fix items (the plan
+   stays `Active`/`Review` until they land).
+3. **If NEEDS WORK**: Explain what needs to change and why. Reference plan requirements. Set the plan's
+   `Status: Active` (or `Blocked` if it can't proceed).
 
 ## H) Key Rules
 

@@ -40,6 +40,7 @@ Docker container that sees your project — and nothing else on your machine.
 | Work across multiple repositories | [Workspace Mode](WORKSPACE.md) |
 | Share skills / personas / prompts with my team | [Team Sharing](TEAM_SHARING.md) |
 | Tell my team what changed | [Team news — /whatsup](TEAM_SHARING.md#team-news-whatsup) |
+| Track plans & todos across sessions | [Plan tracking](CLI_REFERENCE.md#plan-tracking) |
 | Look up a flag or config key | [CLI Reference](CLI_REFERENCE.md) · [Configuration](CONFIGURATION.md) |
 | Fix a problem | [Troubleshooting](TROUBLESHOOTING.md) |
 

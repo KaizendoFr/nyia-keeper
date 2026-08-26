@@ -108,6 +108,10 @@ All assistants include 5 built-in skills (following the [Agent Skills](https://a
 
 Skills are invoked as slash commands within your assistant session.
 
+These skills read and write execution plans under `.nyiakeeper/plans/`. From the host shell you can
+inspect and manage the same store with **`nyia plans`** (migrate, status, decisions, …) and **`nyia
+todo`** (the generated plan inventory) — see [Plan tracking](CLI_REFERENCE.md#plan-tracking).
+
 ## Power User Features
 
 ```bash

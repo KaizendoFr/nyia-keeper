@@ -170,9 +170,9 @@ get_global_args() {
 # Get description for assistant arguments
 get_assistant_arg_desc() {
     case "$1" in
-        "--egress") echo "Build the egress-hardened variant (use with --build or --build-custom-image; Plan 280/283)" ;;
+        "--egress") echo "Build the egress-hardened variant (use with --build or --build-custom-image)" ;;
         "--image") echo "Select specific Docker image (tag or repo:tag)" ;;
-        "--profile") echo "Use a named profile: a separate account that keeps your content (auth-only); personas get their own (Plans 286/288)" ;;
+        "--profile") echo "Use a named profile: a separate account that keeps your content (auth-only); personas get their own" ;;
         "--flavor") echo "Select assistant flavor/variant (e.g., node, python, rust)" ;;
         "--list-flavors") echo "List available flavors for this assistant" ;;
         "--no-cache") echo "Force Docker rebuild without cache (use with --build or --build-custom-image)" ;;
@@ -215,6 +215,8 @@ get_dispatcher_arg_desc() {
         "status") echo "Show global Nyia Keeper status" ;;
         "exclusions") echo "Manage mount exclusions for security" ;;
         "profile") echo "Manage profiles: list, create (auth-only account, or --persona for its own content)" ;;
+        "plans") echo "Manage the plan store: migrate flat plans to per-plan directories, show layout" ;;
+        "todo") echo "Print the generated plan inventory (--write to refresh .nyiakeeper/todo.md)" ;;
         "git-history") echo "Review/reconcile the assistant's commits under a history cutoff" ;;
         "update") echo "Update management (status, list, check, install)" ;;
         "rollback") echo "Rollback to previous version" ;;
@@ -226,7 +228,7 @@ get_dispatcher_arg_desc() {
 
 # Get all dispatcher arguments (for iteration)
 get_dispatcher_args() {
-    echo "config list status exclusions profile git-history update rollback completions logo"
+    echo "config list status exclusions profile plans todo git-history update rollback completions logo"
 }
 
 # === HELP SYSTEM ===
@@ -482,7 +484,7 @@ parse_dispatcher_args() {
                 SHOW_HELP="true"
                 shift
                 ;;
-            --version)
+            --version|-V)
                 SHOW_VERSION="true"
                 return 0
                 ;;
@@ -499,7 +501,10 @@ parse_dispatcher_args() {
                     exit 1
                 fi
                 ;;
-            config|list|status|clean|exclusions|profile|git-history|git-shallow|update|rollback|completions|logo|help)
+            exclusion)  COMMAND="exclusions";  shift; REMAINING_ARGS=("$@"); return 0 ;;   # singular aliases → canonical (334)
+            plan)       COMMAND="plans";       shift; REMAINING_ARGS=("$@"); return 0 ;;
+            completion) COMMAND="completions"; shift; REMAINING_ARGS=("$@"); return 0 ;;
+            config|list|status|clean|exclusions|profile|plans|todo|git-history|git-shallow|update|rollback|completions|logo|help)
                 COMMAND="$1"
                 shift
                 REMAINING_ARGS=("$@")
@@ -533,7 +538,7 @@ parse_assistant_args() {
                 SHOW_HELP="true"
                 return 0
                 ;;
-            --version)
+            --version|-V)
                 SHOW_VERSION="true"
                 return 0
                 ;;
@@ -557,8 +562,8 @@ parse_assistant_args() {
                 export BUILD_EGRESS="true"
                 shift
                 ;;
-            --image)
-                if [[ -n "$2" ]]; then
+            --image|-i)
+                if [[ -n "$2" && "$2" != -* ]]; then     # reject a following flag as the value (parity with --agent)
                     export DOCKER_IMAGE="$2"
                     shift 2
                 else
@@ -582,8 +587,8 @@ parse_assistant_args() {
                 export NYIA_AUTH_PROFILE_CLI="$2"
                 shift 2
                 ;;
-            --flavor)
-                if [[ -z "${2:-}" ]]; then
+            --flavor|-f)
+                if [[ -z "${2:-}" || "$2" == -* ]]; then     # reject empty OR a following flag (parity with --agent)
                     echo "Error: --flavor requires an argument" >&2
                     echo "Usage: --flavor <flavor-name>" >&2
                     echo "Run --list-flavors to see available flavors" >&2
@@ -595,7 +600,7 @@ parse_assistant_args() {
                 export FLAVOR="$2"
                 shift 2
                 ;;
-            --list-flavors|--flavors-list)
+            --list-flavors|--list-flavor|--flavors-list|-lf)
                 export LIST_FLAVORS="true"
                 shift
                 ;;
@@ -603,15 +608,15 @@ parse_assistant_args() {
                 export NO_CACHE="true"
                 shift
                 ;;
-            --status)
+            --status|-s)
                 SHOW_STATUS="true"
                 shift
                 ;;
-            --list-images)
+            --list-images|--list-image|-li)
                 LIST_IMAGES="true"
                 shift
                 ;;
-            --login)
+            --login|-L)
                 LOGIN_ONLY="true"
                 # Check if next argument is --force
                 if [[ "$2" == "--force" ]]; then
@@ -646,7 +651,7 @@ parse_assistant_args() {
                 SETUP_MODE="true"
                 shift
                 ;;
-            --disable-exclusions)
+            --disable-exclusions|--disable-exclusion)
                 export DISABLE_EXCLUSIONS="true"
                 export ENABLE_MOUNT_EXCLUSIONS="false"
                 shift
@@ -689,7 +694,7 @@ parse_assistant_args() {
                     exit 1
                 fi
                 ;;
-            --agent)
+            --agent|-a)
                 if [[ -z "${2:-}" || "$2" == -* ]]; then
                     echo "Error: --agent requires an agent name" >&2
                     echo "Usage: --agent <name>" >&2
@@ -702,11 +707,11 @@ parse_assistant_args() {
                 export NYIA_AGENT="$2"
                 shift 2
                 ;;
-            --list-agents)
+            --list-agents|--list-agent|-la)
                 export LIST_AGENTS="true"
                 shift
                 ;;
-            --list-skills)
+            --list-skills|--list-skill|-ls)
                 export LIST_SKILLS="true"
                 shift
                 ;;
@@ -731,6 +736,13 @@ parse_assistant_args() {
                 ;;
             --rag)
                 export ENABLE_RAG="true"
+                shift
+                ;;
+            --rag-verbose)
+                # Was advertised (help/completions/docs) but had no parse arm → "Unknown option" + exit.
+                # Verbose implies RAG on; forward NYIA_RAG_VERBOSE so the indexer can honor it.
+                export ENABLE_RAG="true"
+                export NYIA_RAG_VERBOSE="true"
                 shift
                 ;;
             *)

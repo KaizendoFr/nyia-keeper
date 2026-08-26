@@ -13,30 +13,15 @@ When invoked, do the following:
 - Identify files modified, tasks completed, decisions made this session
 - List any partially complete in-progress tasks
 
-## B) Update `.nyiakeeper/todo.md`
+## B) Plan Status Drives the Inventory (do not hand-edit todo.md)
 
-Use the exact format with emoji sections:
+`todo.md` is a generated, read-only inventory (`nyia todo`) built from each plan's `Status:`
+field — there is nothing to hand-edit there. To reflect progress, update the plan's `Status:`
+(see D), not the inventory:
 
-```markdown
-## 🔥 Doing
-- [ ] Current task - Priority: X - Plan: plans/xx.md
-
-## 📋 Ready
-- [ ] Next task - Priority: X
-
-## 🧊 Backlog
-- [ ] Future task - Priority: Low
-
-## ✅ Done
-- [x] Completed task - Completed: YYYY-MM-DD - Plan: plans/xx.md
-
-## 🚧 Blocked
-- [ ] Blocked task - Blocked by: Reason
-```
-
-- Move completed tasks to ✅ Done with completion date
-- Update 🔥 Doing with current status
-- Add discovered tasks to 📋 Ready or 🧊 Backlog
+- A plan finished this session → `Status: Done`
+- The active plan → `Status: Active` (or `Blocked` / `Review` as appropriate)
+- A newly discovered, not-yet-started plan → `Status: Draft` (or `Ready` once approved)
 
 ## C) Update `.nyiakeeper/{assistant}/context.md`
 
@@ -55,11 +40,14 @@ Update these sections:
 
 ## D) Update Active Plan Files
 
-- Find plan referenced by current 🔥 Doing todo — follow the path in todo.md, which
-  may point to `.nyiakeeper/plans/` or `.nyiakeeper/shared/plans/`
+- Find the active plan (the one with `Status: Active`, or the plan you worked this session) —
+  follow its path, which may point to `.nyiakeeper/plans/` or `.nyiakeeper/shared/plans/`
 - Write updates to the plan in its current directory (do NOT move shared plans back to private)
 - Check off completed `[ ]` → `[x]` implementation steps
 - Add notes for partially completed steps
+- **Set the plan's `Status:` to reflect reality**: `Active` if still in progress, `Blocked`
+  if stuck, `Review` if awaiting review, `Done` if complete. `todo.md` regenerates from this
+  field — update the plan, not the inventory.
 
 ## E) Generate Compaction Summary
 

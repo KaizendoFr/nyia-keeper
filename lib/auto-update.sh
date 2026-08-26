@@ -1126,6 +1126,30 @@ _maybe_show_alpha_eol_notice() {
     return 0
 }
 
+# Plan 331f: a once-ever, durable heads-up that the plan storage layout changed. Migration is per-PROJECT (the
+# launch gate), and there is no global project registry, so this only INFORMS — it migrates nothing. Mirrors
+# _maybe_show_alpha_eol_notice: versioned durable marker, print-then-record atomically, best-effort on a
+# read-only home (re-shows next time). TTY-gating is the caller's job (assistant-template.sh).
+_LAYOUT_CHANGE_MARKER_VERSION="1"
+_maybe_show_layout_change_notice() {
+    local nyia_home="${NYIAKEEPER_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/nyiakeeper}"
+    local marker="$nyia_home/.layout-change-notice.v${_LAYOUT_CHANGE_MARKER_VERSION}"
+    [[ -f "$marker" ]] && return 0              # already shown (durable one-time)
+
+    echo "" >&2
+    echo "ℹ️  This version changes the plan layout." >&2
+    echo "    Projects still on the old layout will prompt you to migrate (a backup is made first) until you do." >&2
+    echo "" >&2
+
+    # Record atomically AFTER display; best-effort (a read-only home just re-shows next time).
+    mkdir -p "$nyia_home" 2>/dev/null || return 0
+    local tmp="$marker.tmp.$$"
+    if printf 'shown\n' > "$tmp" 2>/dev/null; then
+        mv -f "$tmp" "$marker" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+    fi
+    return 0
+}
+
 check_for_updates_if_due() {
     # Guard: VERSION file must exist — resolve config dir without side effects
     local _config_root="${XDG_CONFIG_HOME:-$HOME/.config}/nyiakeeper"

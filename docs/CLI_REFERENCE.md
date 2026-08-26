@@ -39,6 +39,33 @@ Complete reference for all CLI flags and their interactions.
 
 ---
 
+## Aliases & short flags
+
+Every plural command/flag also accepts a singular form, and the common flags have short forms
+(kubectl-style, **additive** — the plural/long name stays canonical in help and docs).
+
+**Command aliases** (singular = same command): `nyia plan` = `nyia plans` · `nyia exclusion` =
+`nyia exclusions` · `nyia completion` = `nyia completions`.
+
+**Flag aliases & short forms** (on the assistant launchers, e.g. `nyia-claude`):
+
+| Canonical | Singular alias | Short |
+|-----------|----------------|-------|
+| `--image` | — | `-i` |
+| `--flavor` | — | `-f` |
+| `--agent` | — | `-a` |
+| `--status` | — | `-s` |
+| `--login` | — | `-L` |
+| `--version` | — | `-V` |
+| `--list-images` | `--list-image` | `-li` |
+| `--list-flavors` | `--list-flavor` | `-lf` |
+| `--list-agents` | `--list-agent` | `-la` |
+| `--list-skills` | `--list-skill` | `-ls` |
+| `--disable-exclusions` | `--disable-exclusion` | — |
+
+`-l` alone is reserved as the list-prefix; parsing is literal token-matching (no `getopts` bundling), so
+`-li` is a single token, never `-l -i`.
+
 ## Flag Categories
 
 ### Branch Management
@@ -166,6 +193,22 @@ Multiple accounts per assistant, and optional per-profile content. See
 | `nyia profile create <name>` | Register an auth-only profile (inherits your global content) |
 | `nyia profile create <name> --persona [--from tech\|non-tech\|empty]` | Create an isolated persona with its own content, seeded once |
 | `nyia config global auth_profile=<name>` | Make a profile the default for every command (global scope only) |
+
+### Plan tracking (`nyia plans` / `nyia todo`) {#plan-tracking}
+
+Nyia keeps execution plans and a generated todo inventory under `.nyiakeeper/plans/`; the built-in
+skills (`/make-a-plan`, `/implement-plan`, `/plan-review`, `/code-review`) read and write them. The
+command is `nyia plans` (plural).
+
+| Command | Description |
+|---------|-------------|
+| `nyia plans migrate [--dry-run\|--yes]` | Migrate flat `plans/NNN-*.md` to per-plan directories (a full backup is made first) |
+| `nyia plans status` | Show the detected plan layout (`empty` \| `new` \| `legacy` \| `mixed`) |
+| `nyia plans todo [--write]` | The generated plan inventory (alias of `nyia todo`) |
+| `nyia plans status-backfill [--yes]` | Write a canonical `Status:` into plans that lack one (dry-run by default) |
+| `nyia plans decisions [N] [--by X] [--since]` | Show recorded decisions for plan N (or all plans) |
+| `nyia plans decision add <N> --by X --topic .. --question .. --decision .. [--options ..] [--supersedes ..]` | Record a decision |
+| `nyia todo [--write]` | Show — or regenerate with `--write` — the generated plan inventory |
 
 ### Configuration
 
@@ -424,7 +467,7 @@ eval "$(nyia completions zsh)"
 
 | Context | Completions |
 |---------|-------------|
-| `nyia <TAB>` | `config`, `exclusions`, `update`, `list`, `status`, `clean`, `completions`, `rollback`, `help` |
+| `nyia <TAB>` | `config`, `exclusions`, `profile`, `git-history`, `plans`, `todo`, `update`, `list`, `status`, `clean`, `completions`, `rollback`, `logo`, `help` |
 | `nyia config <TAB>` | `view`, `list`, `dump`, `get`, `project`, `global`, `help` |
 | `nyia exclusions <TAB>` | `list`, `test`, `status`, `patterns`, `lockdown`, `help` |
 | `nyia update <TAB>` | `status`, `list`, `check`, `install`, `rollback`, `help` |

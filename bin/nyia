@@ -256,12 +256,23 @@ clean_old_images() {
 
 # Startup update check (skip for utility commands)
 case "${1:-}" in
-    update|rollback|help|--help|-h|config|"") ;;
+    update|rollback|help|--help|-h|--version|config|"") ;;
     *) type check_for_updates_if_due &>/dev/null && check_for_updates_if_due || true ;;
 esac
 
 # Runtime dispatcher with full functionality
 case "${1:-help}" in
+    --version|-V)
+        # Read the VERSION file directly (get_installed_version pulls in print_verbose, which isn't
+        # defined in this dispatcher context). Try the config home, the installed lib dir, and dist-relative.
+        _vdir="$(dirname "$(realpath "$0")")"; _ver=""; _vh=""
+        type get_nyiakeeper_home &>/dev/null && _vh="$(get_nyiakeeper_home 2>/dev/null)"
+        for _vf in ${_vh:+"$_vh/VERSION"} "$HOME/.local/lib/nyiakeeper/VERSION" "$_vdir/../VERSION" "$_vdir/../lib/nyiakeeper/VERSION"; do
+            [[ -f "$_vf" ]] && { _ver="$(tr -d '[:space:]' < "$_vf" 2>/dev/null)"; [[ -n "$_ver" ]] && break; }
+        done
+        echo "Nyia Keeper version: ${_ver:-unknown}"
+        exit 0
+        ;;
     config)
         # Shared config UX (Plan 282). NOTE: the runtime top-level case is not a
         # function, so NO 'local' here. The installer rewrites this lib path for
@@ -327,7 +338,7 @@ case "${1:-help}" in
             exit 1
         fi
         ;;
-    exclusions)
+    exclusions|exclusion)
         # Handle exclusions command
         shift
         script_dir_real="$(dirname "$(realpath "$0")")"
@@ -392,7 +403,27 @@ case "${1:-help}" in
         fi
         nyia_git_history_command "$gh_project" "$@"
         ;;
-    completions)
+    plans|plan)
+        # Plan-store layout migration + decisions (Plan 331b/c). Handler lives in the shipped lib.
+        shift
+        script_dir_real="$(dirname "$(realpath "$0")")"
+        _pc_lib="$script_dir_real/../lib/plan-commands.sh"
+        [[ -f "$_pc_lib" ]] || _pc_lib="$script_dir_real/../lib/nyiakeeper/plan-commands.sh"
+        if [[ -f "$_pc_lib" ]]; then source "$_pc_lib"; else echo "Error: plan-commands library not found" >&2; exit 1; fi
+        handle_plans_command "$@"
+        exit $?
+        ;;
+    todo)
+        # Generated plan inventory (Plan 331d). Handler lives in the shipped lib.
+        shift
+        script_dir_real="$(dirname "$(realpath "$0")")"
+        _pi_lib="$script_dir_real/../lib/plan-inventory.sh"
+        [[ -f "$_pi_lib" ]] || _pi_lib="$script_dir_real/../lib/nyiakeeper/plan-inventory.sh"
+        if [[ -f "$_pi_lib" ]]; then source "$_pi_lib"; else echo "Error: plan-inventory library not found" >&2; exit 1; fi
+        handle_todo_command "$@"
+        exit $?
+        ;;
+    completions|completion)
         # Output shell completion script to stdout
         shift
         _script_base="$(dirname "$(realpath "$0")")"
@@ -502,6 +533,21 @@ case "${1:-help}" in
         echo "  - Need help? Visit: https://github.com/KaizendoFr/nyia-keeper"
         echo ""
         echo "For assistant-specific help: nyia-<assistant> --help"
+        ;;
+    logo)
+        cat << 'LOGO'
+
+       ╱|、
+      (˚ˎ 。7
+       |、  ˜〵
+       じ しˍ,)ノ
+
+   ═══╡ NYIA KEEPER ╞═══
+   AI-Assisted Dev Containers
+   github.com/KaizendoFr
+
+LOGO
+        exit 0
         ;;
     *)
         echo "Unknown command: $1"

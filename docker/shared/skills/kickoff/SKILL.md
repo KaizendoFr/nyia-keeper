@@ -18,6 +18,16 @@ When invoked, follow the Context Management Protocol:
    Also scan `.nyiakeeper/shared/plans/` for active plans not referenced in todo.md.
 4. Inspect git state: `git status`, `git branch --show-current`, `git log -n 5 --oneline`
 
+## A2) Triage Plan Status (keep the generated inventory truthful)
+
+`todo.md` is a generated, read-only inventory (`nyia todo`) built from each plan's `Status:`
+field. As you read the plans, if a plan's `Status:` is missing or clearly stale relative to
+its content — e.g. all steps checked `[x]` but not marked `Done`, or a plan actively being
+worked yet still `Draft` — assess it and set an accurate `Status:`
+(`Draft Ready Active Blocked Review Done Dropped`). This is the continuous LLM triage that
+keeps the generated inventory honest; bash only guarantees the field exists, the accurate
+value is your judgment.
+
 ## B) Output "State Snapshot"
 
 Provide a concise summary:
