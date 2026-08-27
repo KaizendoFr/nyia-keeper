@@ -1,5 +1,5 @@
 ---
-name: implement-plan
+name: nyia-implement-plan
 description: Execute a single plan with runtime intelligence — pre-flight validation, per-step verification, regression detection, and checkpointing. Catches stale assumptions before coding and regressions at the step that introduced them. Use when implementing any plan.
 ---
 
@@ -7,15 +7,15 @@ description: Execute a single plan with runtime intelligence — pre-flight vali
 
 Execute a plan with structured guardrails that a static plan file cannot provide:
 pre-flight assumption checks, per-step verification with checkpointing, mid-run
-regression detection, and a post-flight summary. Complements `/make-a-plan` (which
-creates plans) and `/run-plans` (which orchestrates multiple plans in parallel).
+regression detection, and a post-flight summary. Complements `/nyia-make-a-plan` (which
+creates plans) and `/nyia-run-plans` (which orchestrates multiple plans in parallel).
 
 ## A) Parse & Load
 
 Parse the arguments and load the plan:
 
 ```
-/implement-plan <plan-ref>
+/nyia-implement-plan <plan-ref>
 
 plan-ref:
   Number (e.g., "228")     -> find the plan's directory .nyiakeeper/plans/228-*/plan.md (per-plan layout), then legacy flat .nyiakeeper/plans/228-*.md, then the same two shapes under .nyiakeeper/shared/plans/ (exclude plan-review-*, pair-review-* and code-review-* files). Private wins if found in both.
@@ -30,7 +30,7 @@ plan-ref:
    the plan is already complete.
 4. **Meta-plan detection**: if the plan contains a `## Subplans` table, inform the user
    this is a meta-plan and suggest executing each subplan individually
-   (`/implement-plan {N}a`, `/implement-plan {N}b`, etc.). Do not attempt to execute
+   (`/nyia-implement-plan {N}a`, `/nyia-implement-plan {N}b`, etc.). Do not attempt to execute
    a meta-plan directly.
 
 ## B) Pre-flight Validation
@@ -93,7 +93,7 @@ Wait for user decision before proceeding.
 - **Keep the plan's Status accurate throughout**: `Active` while working, `Blocked` if you
   hit a blocker (C5), `Done` once all steps complete and verification passes (E). This rides
   the per-step plan update in C4 — no separate bookkeeping.
-- `todo.md` is a generated inventory (`nyia todo`) built from plan `Status:` fields — never
+- `todo.md` is a generated inventory (written by the host at launch/exit) built from plan `Status:` fields — never
   hand-edit it.
 
 ## C) Step Execution Loop
@@ -207,9 +207,9 @@ steps are complete (or execution is stopped), output a structured summary:
 **Branch**: {current branch}
 
 **Next actions**:
-- [ ] Review changes: `/code-review {N}`
+- [ ] Review changes: `/nyia-code-review {N}`
 - [ ] Commit: `git add -p && git commit` (suggested message: {type}({scope}): {plan title})
-- [ ] Confirm the plan's `Status: Done` (the `nyia todo` inventory regenerates from it — do not hand-edit todo.md)
+- [ ] Confirm the plan's `Status: Done` (the host regenerates the `todo.md` inventory from it after the session — do not hand-edit todo.md)
 - [ ] Next plan: {N+1} (if applicable)
 ```
 
@@ -217,17 +217,17 @@ Update `.nyiakeeper/{assistant}/context.md` with the final status.
 
 ## F) run-plans Compatibility Note
 
-This section is documentation only — no changes to `/run-plans` are required.
+This section is documentation only — no changes to `/nyia-run-plans` are required.
 
-`/run-plans` currently executes plans by reading steps and implementing them directly.
-In a future iteration, `/run-plans` MAY delegate per-plan execution to
-`/implement-plan` to gain pre-flight validation and regression detection for each
+`/nyia-run-plans` currently executes plans by reading steps and implementing them directly.
+In a future iteration, `/nyia-run-plans` MAY delegate per-plan execution to
+`/nyia-implement-plan` to gain pre-flight validation and regression detection for each
 plan in a batch. The contract for that delegation:
 
-- `/run-plans` resolves plan references and builds the conflict matrix (its job).
-- `/implement-plan` handles single-plan execution with guardrails (its job).
-- Integration point: `/run-plans` invokes `/implement-plan {N}` per plan instead of
+- `/nyia-run-plans` resolves plan references and builds the conflict matrix (its job).
+- `/nyia-implement-plan` handles single-plan execution with guardrails (its job).
+- Integration point: `/nyia-run-plans` invokes `/nyia-implement-plan {N}` per plan instead of
   executing steps inline.
 
-This is a natural extension, not a current requirement. No changes to `/run-plans`
-are needed for `/implement-plan` to be useful standalone.
+This is a natural extension, not a current requirement. No changes to `/nyia-run-plans`
+are needed for `/nyia-implement-plan` to be useful standalone.

@@ -24,7 +24,10 @@ decisions_file() {
 #   Case-insensitive via explicit classes (portable GNU+BSD sed — no `I` flag); LC_ALL=C = ASCII-only.
 _dec_scrub() {
     local s="$1"
-    s="${s//$'\r'/ }"; s="${s//$'\n'/ }"
+    s="${s//$'\r'/ }"; s="${s//$'\n'/ }"; s="${s//$'\t'/ }"
+    # (337 security review) strip the remaining C0 controls + DEL byte-wise — terminal escapes (ESC, BEL, OSC)
+    # from an untrusted decisions.md never reach the terminal; UTF-8 bytes (>= 0x80) are untouched.
+    s="$(LC_ALL=C tr -d '\000-\037\177' <<<"$s")"
     LC_ALL=C sed -E 's/([A-Za-z0-9_]*([Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Pp][Ww][Dd])[A-Za-z0-9_]*=)[^ ]+/\1[REDACTED]/g' <<<"$s"
 }
 
@@ -60,7 +63,8 @@ read_decisions() {
 }
 
 # add_decision_cli <N> --by X --topic T --question Q [--options O] --decision D [--supersedes S]
-#   The safe WRITE path (for `nyia plans decision add` + skill hooks): parse named flags and dispatch to the
+#   The safe WRITE path (library only — the user-facing `decision add` command was removed by Plan 337; the
+#   file format in docs/PLAN_FILE_CONTRACT.md is the contract): parse named flags and dispatch to the
 #   hardened append_decision (required-field + actor + ISO-date validation, secret redaction, injection-proof
 #   grammar). Unknown flags are rejected; missing required fields are rejected by append_decision.
 add_decision_cli() {
@@ -84,19 +88,35 @@ add_decision_cli() {
 #   Uses the caller's locals (id/date/by/topic/q/dec/sup, want_by/since). Returns without printing if filtered.
 _emit_decision() {
     [[ -z "$id" ]] && return 0
+    parsed=$(( parsed + 1 ))
+    # Plan 337: entries are appended by skills/humans, not by append_decision — required fields are checked and
+    # every field is scrubbed (secret redaction + CR/LF fold) at RENDER time, so the display guard never depends
+    # on who wrote the file.
+    if [[ -z "$topic" || -z "$dec" ]]; then
+        printf 'warning: malformed entry %s in %s: missing %s\n' "$id" "$f" "$([[ -z "$topic" ]] && printf Topic || printf Decision)" >&2; bad=1
+    fi
     [[ -n "$want_by" && "$by" != "$want_by" ]] && return 0
     [[ -n "$since" && "$date" < "$since" ]] && return 0     # ISO dates compare lexically
-    printf '%s  %s  · %s\n' "$id" "$date" "$by"
-    [[ -n "$topic" ]] && printf '  Topic:    %s\n' "$topic"
-    [[ -n "$q" ]]     && printf '  Question: %s\n' "$q"
-    [[ -n "$dec" ]]   && printf '  Decision: %s\n' "$dec"
-    [[ -n "$sup" ]]   && printf '  (supersedes %s)\n' "$sup"
+    printf '%s  %s  · %s\n' "$(_dec_scrub "$id")" "$date" "$(_dec_scrub "$by")"   # header tokens scrubbed too (337)
+    [[ -n "$topic" ]] && printf '  Topic:    %s\n' "$(_dec_scrub "$topic")"
+    [[ -n "$q" ]]     && printf '  Question: %s\n' "$(_dec_scrub "$q")"
+    [[ -n "$dec" ]]   && printf '  Decision: %s\n' "$(_dec_scrub "$dec")"
+    [[ -n "$sup" ]]   && printf '  (supersedes %s)\n' "$(_dec_scrub "$sup")"
     printf '\n'
 }
 
-# render_decisions <file> [--by <actor>] [--since <ISO-date>] — read-only. Print each entry; a malformed
-# line is named on stderr and forces a non-zero exit (deterministic — never silently dropped). Good
-# entries still render. Line-by-line (no pipe → set -e/pipefail safe).
+# _dec_warn_line <file> <n> <line> — name a malformed line without echoing it raw (a hand/LLM-edited file may
+# carry escape sequences): non-printables stripped, truncated to 60 chars.
+_dec_warn_line() {
+    local t; t="$(LC_ALL=C tr -d '\000-\037\177' <<<"$3")"; t="${t:0:60}"
+    printf 'warning: malformed entry at %s:%s: %s\n' "$1" "$2" "$t" >&2
+}
+
+# render_decisions <file> [--by <actor>] [--since <ISO-date>] — read-only, TOLERANT (Plan 337). Print each
+# entry; a malformed line or a missing required field is named on stderr (file:line / entry id) and never
+# silently dropped. Exit is non-zero only when something was malformed AND no entry parsed at all — a
+# hand-edited file with one bad line still renders its good entries with rc 0. CRLF tolerated.
+# Line-by-line (no pipe → set -e/pipefail safe).
 render_decisions() {
     local f="$1"; shift || true
     local want_by="" since="" a
@@ -108,9 +128,9 @@ render_decisions() {
         esac
     done
     [[ -f "$f" ]] || return 1
-    local line n=0 bad=0 id="" date="" by="" topic="" q="" opts="" dec="" sup=""
+    local line n=0 bad=0 parsed=0 id="" date="" by="" topic="" q="" opts="" dec="" sup=""
     while IFS= read -r line || [[ -n "$line" ]]; do
-        n=$((n+1))
+        n=$((n+1)); line="${line%$'\r'}"
         if [[ "$line" =~ ^##\ (D[^\ ]+)\ \(([0-9]{4}-[0-9]{2}-[0-9]{2})\)\ ·\ decided-by:\ (.+)$ ]]; then
             _emit_decision                                  # flush the previous entry
             id="${BASH_REMATCH[1]}"; date="${BASH_REMATCH[2]}"; by="${BASH_REMATCH[3]}"
@@ -122,11 +142,11 @@ render_decisions() {
         elif [[ "$line" =~ ^Supersedes:\ (.*)$ ]]; then sup="${BASH_REMATCH[1]}"
         elif [[ -z "$line" ]]; then :                       # blank separator
         else
-            printf 'warning: malformed line %s in %s: %s\n' "$n" "$f" "$line" >&2; bad=1
+            _dec_warn_line "$f" "$n" "$line"; bad=1
         fi
     done < "$f"
     _emit_decision                                          # flush the last entry
-    [[ "$bad" -eq 0 ]]
+    [[ "$bad" -eq 0 || "$parsed" -gt 0 ]]
 }
 
 # show_decisions [<N>] [--by <actor>] [--since <ISO>] — the read-only viewer entry.
@@ -150,7 +170,7 @@ show_decisions() {
         f="${d}decisions.md"; [[ -f "$f" ]] || continue
         any=1
         printf '=== %s ===\n' "${d%/}"
-        render_decisions "$f" "${pass[@]}" || rc=1
+        render_decisions "$f" "${pass[@]}" || true          # aggregate view: warnings on stderr, rc stays 0 (337)
     done
     [[ "$any" -eq 0 ]] && printf 'No decisions recorded in any plan.\n'
     return "$rc"

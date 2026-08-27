@@ -1,5 +1,5 @@
 ---
-name: share
+name: nyia-share
 description: "Promote/Demote Plans Between Private and Shared"
 ---
 
@@ -14,7 +14,7 @@ snapshot of `todo.md`.
 ## A) Argument Parsing
 
 ```
-/share <subcommand> [args]
+/nyia-share <subcommand> [args]
 
 subcommand:
   plan <N>          → move plan N + reviews to shared/plans/, rewrite todo.md path
@@ -24,7 +24,7 @@ subcommand:
   unshare todo      → remove shared/todo.md
 ```
 
-## B) `/share plan <N>`
+## B) `/nyia-share plan <N>`
 
 1. **Resolve** plan: find `.nyiakeeper/plans/{N}-*/plan.md` (a per-plan directory), else
    the legacy flat file `.nyiakeeper/plans/{N}-*.md` (exclude `pair-review-*`,
@@ -57,7 +57,7 @@ subcommand:
      Updated: todo.md path reference  (if applicable)
    ```
 
-## C) `/unshare plan <N>`
+## C) `/nyia-share unshare plan <N>`
 
 1. **Resolve** plan: find `.nyiakeeper/shared/plans/{N}-*/plan.md` (a per-plan directory),
    else the legacy flat file `.nyiakeeper/shared/plans/{N}-*.md` (exclude review files).
@@ -74,7 +74,7 @@ subcommand:
 
 5. **Print summary** (same format as share, with "Unshared" label).
 
-## D) `/share todo`
+## D) `/nyia-share todo`
 
 1. **Copy** (not move) `.nyiakeeper/todo.md` to `.nyiakeeper/shared/todo.md`.
    - If `todo.md` doesn't exist, print error and stop.
@@ -82,16 +82,16 @@ subcommand:
    ```
    Copied todo.md → shared/todo.md
    Note: Your private todo.md remains the working copy.
-   shared/todo.md is a snapshot for the team — re-run /share todo to update it.
+   shared/todo.md is a snapshot for the team — re-run /nyia-share todo to update it.
    ```
 
-## E) `/unshare todo`
+## E) `/nyia-share unshare todo`
 
 1. **Remove** `.nyiakeeper/shared/todo.md`.
    - If it doesn't exist, print "shared/todo.md not found — nothing to unshare" and stop.
 2. **Print confirmation**: "Removed shared/todo.md"
 
-## F) `/share list`
+## F) `/nyia-share list`
 
 1. **Scan** `.nyiakeeper/shared/plans/` for plans — directories `NNN-*/` with a `plan.md`, and
    legacy flat plan files (exclude review files: `pair-review-*`, `plan-review-*`, `code-review-*`).
@@ -106,11 +106,11 @@ subcommand:
 
    Todo: shared  (or "Todo: not shared")
    ```
-   If no plans and no todo: "Nothing shared yet. Use /share plan <N> or /share todo."
+   If no plans and no todo: "Nothing shared yet. Use /nyia-share plan <N> or /nyia-share todo."
 
 ## G) Key Rules
 
-- **Plans are private by default** — `/share` is an explicit publish action.
+- **Plans are private by default** — `/nyia-share` is an explicit publish action.
 - **Review files travel with their plan** — never split plan from its reviews (a plan directory carries them in `reviews/`).
 - **Todo is a snapshot copy** — private todo.md remains the working copy.
 - **Todo.md paths are rewritten** on share/unshare to keep omitted-argument workflows working.

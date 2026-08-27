@@ -8,6 +8,36 @@
 _pm_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # plan_number_of <slug-or-name> — print the leading NNN[a] key (e.g. 331a, 42); non-zero if none.
+[[ "$(type -t plan_slug_is_subnumbered)" == function ]] || source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/plan-resolution.sh"
+
+# _prefer_body_slug <num> <candidate-slug> — pick the dir that owns number <num> (reviews route there).
+#   Plan 337: the parent (non-sub-numbered) sibling wins; otherwise the first sorted. Same rule as
+#   resolve_plan_dir. Writes the caller's body_slug[] (dynamic scope).
+_prefer_body_slug() {
+    local num="$1" cand="$2"
+    if [[ -z "${body_slug[$num]:-}" ]]; then body_slug[$num]="$cand"
+    elif plan_slug_is_subnumbered "${body_slug[$num]}" && ! plan_slug_is_subnumbered "$cand"; then body_slug[$num]="$cand"
+    fi
+    return 0
+}
+
+# list_non_plan_dirs <plans_dir> — one basename per line: top-level directories the migrator leaves untouched
+#   (Plan 337: named, never silent): not NNN-slug shaped (platform/, core/, …), NNN-slug WITHOUT a plan.md, or a
+#   symlinked dir. Read-only; used by the planner (SKIPDIR lines) and by `nyia plans status`.
+list_non_plan_dirs() {
+    local dir="$1" d b
+    for d in "$dir"/*/; do
+        d="${d%/}"; [[ -e "$d" || -L "$d" ]] || continue
+        b="$(basename "$d")"
+        case "$b" in *$'\t'*|*$'\n'*) continue ;; esac            # unsafe names are the UNSAFE report's business
+        if [[ -L "$d" ]]; then printf '%s\n' "$b"
+        elif [[ "$b" =~ ^[0-9]+[a-z]?- ]]; then [[ -f "$d/plan.md" ]] || printf '%s\n' "$b"
+        else printf '%s\n' "$b"
+        fi
+    done
+    return 0
+}
+
 plan_number_of() {
     local s="$1" num
     num="$(printf '%s' "$s" | sed -nE 's/^([0-9]+[a-z]?)([-.].*)?$/\1/p')"
@@ -100,8 +130,12 @@ plan_migration() {
         b="$(basename "$d")"
         num="$(plan_number_of "$b")" || continue
         body_count[$num]=$(( ${body_count[$num]:-0} + 1 ))
-        [[ -z "${body_slug[$num]:-}" ]] && body_slug[$num]="$b"
+        _prefer_body_slug "$num" "$b"
     done
+    # Plan 337: name what pass 0 leaves untouched (a nested plan tree, an empty numbered dir, a link) — one
+    # SKIPDIR line each. Not counted by the union invariant (that is about top-level FILES).
+    local _nd
+    while IFS= read -r _nd; do [[ -n "$_nd" ]] && printf 'SKIPDIR\t%s\n' "$_nd"; done < <(list_non_plan_dirs "$dir")
     # Pass 1: enumerate top-level flat files; count bodies per number.
     for f in "$dir"/*; do
         [[ -f "$f" ]] || continue
@@ -117,7 +151,7 @@ plan_migration() {
         if [[ "$cat" == "body" ]]; then
             num="$(plan_number_of "$key")"
             body_count[$num]=$(( ${body_count[$num]:-0} + 1 ))
-            [[ -z "${body_slug[$num]:-}" ]] && body_slug[$num]="$key"   # FIRST body (sorted) — reviews route here
+            _prefer_body_slug "$num" "$key"                          # parent wins, else first sorted (337)
         fi
     done
     # Pass 2: emit the plan (TAB-delimited fields).
@@ -305,7 +339,10 @@ _plan_dirs_for_number() {
         d="${d%/}"
         [[ -d "$d" && ! -L "$d" && -f "$d/plan.md" ]] || continue
         b="$(basename "$d")"; k="$(plan_number_of "$b")" || continue
-        [[ "$k" == "$num" ]] && printf '  - %s\n' "$b"
+        [[ "$k" == "$num" ]] || continue
+        # Plan 337: a "NNN-<digit>-…" sibling is sub-numbering, not a distinct number — say so in the log
+        if plan_slug_is_subnumbered "$b"; then printf '  - %s  (sub-numbered: parses as %s; the parent wins resolve-by-number)\n' "$b" "$num"
+        else printf '  - %s\n' "$b"; fi
     done
     return 0
 }
@@ -361,7 +398,7 @@ execute_migration() {
     # plans migrate LAST (G3) — they describe their own migrator, so a bug must not corrupt them first.
     local -a moves_other=() moves_331=() note_report=() noted_nums=()  # NOTE = multi-plan numbers (informational)
     local unsafe_total=0 _bdir _bnum reason
-    local -a routed_report=() orphan_report=()            # Plan 336: named, auditable, never blocking
+    local -a routed_report=() orphan_report=() skipdir_report=()   # Plan 336/337: named, auditable, never blocking
     declare -A body_dirs                                   # number → its plan dirs (for the collisions log)
     for l in "${plan[@]}"; do
         IFS=$'\t' read -r action src dest reason <<<"$l"
@@ -374,6 +411,7 @@ execute_migration() {
             ROUTED)  routed_report+=("$src → $dest/reviews/ ($reason)") ;;  # a fallback guess: reported, NOT a collision NOTE
             ORPHAN)  orphan_report+=("$src (no plan body for $dest)") ;;    # Plan 336 R1: named, stays flat, never blocks
             SKIP)    ;;                                          # foreign file (the planner owns orphan-vs-foreign now)
+            SKIPDIR) skipdir_report+=("$src") ;;                 # Plan 337: a non-plan directory, left untouched, named
         esac
     done
     # Apply: everything else first, the 331* plans last. copy → verify → remove per file (via _do_move).
@@ -415,8 +453,8 @@ execute_migration() {
         {
             printf '# Plan-number collisions — GENERATED by `nyia plans migrate` (%s)\n\n' "$mig_id"
             printf 'These numbers are shared by MULTIPLE plans. Each migrated to its OWN dir (no renumbering —\n'
-            printf 'that would break cross-plan references). resolve-by-number returns the FIRST listed, and a\n'
-            printf "duplicate number's reviews were grouped under its first plan. Review these — ask your assistant\n"
+            printf 'that would break cross-plan references). resolve-by-number returns the parent (a non-sub-numbered\n'
+            printf "sibling) else the FIRST listed, and a duplicate number's reviews were grouped there. Review these — ask your assistant\n"
             printf 'to identify true duplicates vs distinct plans, and link related ones (requirement/ordered/meta).\n\n'
             for n in $(printf '%s\n' "${all_nums[@]}" | LC_ALL=C sort -u); do   # keys are ^[0-9]+[a-z]?$ tokens
                 printf '## %s\n' "$n"; _plan_dirs_for_number "$dir" "$n"; printf '\n'
@@ -449,6 +487,12 @@ execute_migration() {
         } >&2
     elif _is_generated_file "$dir/migration-notes.md"; then
         rm -f "$dir/migration-notes.md"   # 336 review: a clean run must not leave STALE routes/orphans advertised
+    fi
+    # Plan 337: directories the migrator does not touch are NAMED (stderr + `nyia plans status`), never persisted
+    # in migration-notes.md (that file drives the "routed by fallback" launch line and the clean-run cleanup).
+    if [[ ${#skipdir_report[@]} -gt 0 ]]; then
+        { printf 'Left untouched, %s non-plan director%s (not NNN-slug/plan.md — migrate by hand or keep as archive):\n' "${#skipdir_report[@]}" "$([[ ${#skipdir_report[@]} -eq 1 ]] && printf y || printf ies)"
+          for r in "${skipdir_report[@]}"; do printf '  - %s/\n' "$r"; done; } >&2
     fi
     if [[ "$remnant" -eq 0 ]]; then
         printf 'layout-v2\n' > "$dir/.layout-v2"

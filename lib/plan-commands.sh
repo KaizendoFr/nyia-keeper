@@ -171,7 +171,7 @@ maybe_offer_plan_migration() {
 # handle_plans_command <subcommand> [args…] — the `nyia plans` dispatcher. Defined HERE (a shipped lib) so
 # BOTH the source bin/nyia and the generated runtime dispatcher source this lib and call it (mirrors
 # handle_profile_command in profile-commands.sh) — avoiding the source/runtime parity gap. Operates on the
-# current project's plan store; decisions/decision lazy-source the sibling plan-decisions.sh.
+# current project's plan store; decisions lazy-sources the sibling plan-decisions.sh.
 handle_plans_command() {
     local project="${PROJECT_PATH:-$(pwd)}"
     local plans_dir="$project/.nyiakeeper/plans"
@@ -188,6 +188,11 @@ handle_plans_command() {
             fi
             if [[ -f "$plans_dir/migration-notes.md" ]]; then   # `if`, not `&&`: a bare && as the arm's last command would return 1
                 printf '  notes: %s (reviews routed by fallback / left flat)\n' "$plans_dir/migration-notes.md"
+            fi
+            # Plan 337: name the directories the migrator/inventory ignore (nested trees, empty numbered dirs, links)
+            if [[ "$(type -t list_non_plan_dirs)" == function ]]; then
+                local _nd _ndc=0
+                while IFS= read -r _nd; do [[ -n "$_nd" ]] || continue; [[ $_ndc -eq 0 ]] && printf '  untouched (not a plan directory):\n'; printf '    - %s/\n' "$_nd"; _ndc=$(( _ndc + 1 )); done < <(list_non_plan_dirs "$plans_dir")
             fi
             # Detector (331b fold): on an already-migrated store, flag plans missing an explicit Status field
             # so the user knows to run status-backfill (migrating projects get it auto during `migrate`).
@@ -209,13 +214,10 @@ handle_plans_command() {
                 || { printf 'decisions library not found\n' >&2; return 1; }
             NYIA_PLANS_DIR="$plans_dir" show_decisions "$@" ;;
         decision)
-            [[ "$(type -t add_decision_cli)" == function ]] || source "$_pc_dir/plan-decisions.sh" \
-                || { printf 'decisions library not found\n' >&2; return 1; }
-            local dec_action="${1:-}"; shift 2>/dev/null || true
-            case "$dec_action" in
-                add) NYIA_PLANS_DIR="$plans_dir" add_decision_cli "$@" ;;
-                *)   printf 'Usage: nyia plans decision add <N> --by X --topic .. --question .. --decision .. [--options ..] [--supersedes ..]\n' >&2; return 1 ;;
-            esac ;;
+            # Plan 337: the host has no WRITE surface for decisions any more. The contract is the file format
+            # (docs/PLAN_FILE_CONTRACT.md) — skills append entries inside the container, humans use an editor.
+            printf 'removed: `nyia plans decision add` — append an entry to <plan-dir>/decisions.md instead (format: docs/PLAN_FILE_CONTRACT.md)\n' >&2
+            return 2 ;;
         status-backfill)
             [[ "$(type -t plans_status_backfill)" == function ]] || source "$_pc_dir/plan-inventory.sh" \
                 || { printf 'inventory library not found\n' >&2; return 1; }
@@ -231,7 +233,33 @@ handle_plans_command() {
             printf '  todo [--write]                    The generated plan inventory (alias of `nyia todo`)\n'
             printf '  status-backfill [--yes]           Write a canonical Status: into plans that lack one (dry-run default)\n'
             printf '  decisions [N] [--by X] [--since]  Show recorded decisions for plan N (or all plans)\n'
-            printf '  decision add <N> --by --topic --question --decision [--options --supersedes]  Record a decision\n' ;;
+            ;;
         *) printf 'Unknown plans command: %s (try: nyia plans help)\n' "$subcommand" >&2; return 1 ;;
     esac
+}
+
+# refresh_todo_inventory_quiet <project_path> [--hint] — Plan 337: the HOST regenerates .nyiakeeper/todo.md
+#   at launch (right after the migration gate) and after the container exits. `nyia` never runs inside the
+#   container, so this is the only writer of the inventory besides `nyia todo --write`.
+#   Best-effort by contract: ALWAYS returns 0, prints at most one line, never prompts.
+#     - legacy/mixed store → nothing (that is the migration gate's business);  empty store → nothing;
+#     - a hand-written (non-GENERATED) todo.md is never overwritten (write_todo_inventory's guard, rc 4) —
+#       with --hint (launch only) one stderr line says so; after-exit calls stay silent.
+#   Gated on the LAYOUT, not on .migration-verified: a project that started on the per-plan layout never
+#   gets the marker and is exactly the store this must serve.
+refresh_todo_inventory_quiet() {
+    local project="${1:-$PWD}" hint="${2:-}" plans out tasks layout rc=0
+    plans="$project/.nyiakeeper/plans"
+    [[ -d "$plans" ]] || return 0
+    # 337 security review: never follow a symlinked .nyiakeeper / plans / todo.md out of the project
+    [[ -L "$project/.nyiakeeper" || -L "$plans" || -L "$project/.nyiakeeper/todo.md" ]] && return 0
+    layout="$(detect_plan_layout "$plans" 2>/dev/null)" || return 0
+    case "$layout" in legacy|mixed|empty) return 0 ;; esac
+    [[ "$(type -t write_todo_inventory)" == function ]] || source "$_pc_dir/plan-inventory.sh" 2>/dev/null || return 0
+    out="$project/.nyiakeeper/todo.md"; tasks="$project/.nyiakeeper/tasks.md"
+    NYIA_PLANS_DIR="$plans" write_todo_inventory "$plans" "$out" "$tasks" >/dev/null 2>&1 || rc=$?
+    if [[ "$rc" -eq 4 && "$hint" == "--hint" ]]; then
+        printf 'note: .nyiakeeper/todo.md is hand-written — not regenerated (archive it, or NYIA_TODO_FORCE=1 nyia todo --write)\n' >&2
+    fi
+    return 0
 }

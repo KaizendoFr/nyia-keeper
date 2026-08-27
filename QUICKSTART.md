@@ -96,15 +96,23 @@ See [docs/BRANCH_MANAGEMENT.md](docs/BRANCH_MANAGEMENT.md) for detailed workflow
 
 ## Built-in Skills
 
-All assistants include 5 built-in skills (following the [Agent Skills](https://agentskills.io) standard):
+All assistants include 12 built-in skills (following the [Agent Skills](https://agentskills.io) standard), all
+prefixed **`nyia-`** — type `/nyia-` to list them. Any other slash command is the assistant CLI's own or yours.
 
 | Skill | Command | Purpose |
 |-------|---------|---------|
-| **kickoff** | `/kickoff` | Start a session - reconstructs state from `.nyiakeeper/` files |
-| **make-a-plan** | `/make-a-plan` | Create a phased execution plan with atomic steps |
-| **implement-plan** | `/implement-plan` | Execute a plan with pre-flight validation, per-step verification, and regression detection |
-| **plan-review** | `/plan-review` | Architect-level plan review between agents (e.g., Claude reviews Codex's plan) |
-| **checkpoint** | `/checkpoint` | Save session state before context compaction or shutdown |
+| **nyia-kickoff** | `/nyia-kickoff` | Start a session — reconstructs state from `.nyiakeeper/` and proposes the next steps |
+| **nyia-checkpoint** | `/nyia-checkpoint` | Save session state before ending or when context runs long |
+| **nyia-make-a-plan** | `/nyia-make-a-plan` | Turn a goal into a phased, resumable plan under `.nyiakeeper/plans/` |
+| **nyia-plan-review** | `/nyia-plan-review` | Architect-level plan review, round-tripping between assistants |
+| **nyia-implement-plan** | `/nyia-implement-plan` | Execute one plan with pre-flight checks, per-step verification, regression detection |
+| **nyia-run-plans** | `/nyia-run-plans` | Execute several Ready plans in safe parallel batches |
+| **nyia-code-review** | `/nyia-code-review` | Pragmatic, security-first review of the code written for a plan |
+| **nyia-plan-status** | `/nyia-plan-status` | "Where are we?" — a filterable table of plans by status / roadmap label |
+| **nyia-show-decisions** | `/nyia-show-decisions` | The decision trail of a plan — what was decided, by whom, why |
+| **nyia-share** | `/nyia-share` | Promote / demote plans between private and team-shared |
+| **nyia-whatsup** | `/nyia-whatsup` | Team news — read what changed since your last session, or publish an entry |
+| **nyia-overlay** | `/nyia-overlay` | Customize the assistant's Docker image with extra packages or tools |
 
 Skills are invoked as slash commands within your assistant session.
 

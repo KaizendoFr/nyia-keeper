@@ -184,9 +184,10 @@ the original paths unchanged, so upgrading changes nothing for existing users.
 - **Auth-only inheritance is slightly asymmetric.** Prompt-override *rules* are read
   fresh at every launch, so editing a global rule takes effect immediately in an
   auth-only profile. *Skills and agents* are copied into the profile's session directory
-  at launch with no-clobber semantics — so a global skill you **add** shows up, but a
-  global skill you **edit** after the profile's first launch is not re-copied. (This is
-  the same copy-on-launch behavior the default profile has always had.)
+  at launch. Nyia's **built-in** skills are refreshed on every launch (they are Nyia-owned and
+  carry a `.nyia-builtin` marker — Plan 337); a skill you **wrote yourself** is never overwritten,
+  so a global skill you **add** shows up, but one you **edit** after the profile's first launch
+  is not re-copied. (This is the same copy-on-launch behavior the default profile has.)
 - **A persona doesn't track your default.** Because it's seeded once, later changes to
   your global content don't flow into it. Re-seed by copying, or start over with a fresh
   `--from`.

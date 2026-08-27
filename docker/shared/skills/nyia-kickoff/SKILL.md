@@ -1,5 +1,5 @@
 ---
-name: kickoff
+name: nyia-kickoff
 description: Session start skill. Reconstructs previous session state from .nyiakeeper files, then outputs a phased execution plan with atomic steps. Use at the beginning of any coding session.
 ---
 
@@ -22,7 +22,7 @@ When invoked, follow the Context Management Protocol:
 
 ## A2) Triage Plan Status (keep the generated inventory truthful)
 
-`todo.md` is a generated, read-only inventory (`nyia todo`) built from each plan's `Status:`
+`todo.md` is a generated, read-only inventory (written by the host `nyia` at launch and after the session — it is not available inside the container) built from each plan's `Status:`
 field. As you read the plans, if a plan's `Status:` is missing or clearly stale relative to
 its content — e.g. all steps checked `[x]` but not marked `Done`, or a plan actively being
 worked yet still `Draft` — assess it and set an accurate `Status:`
@@ -52,14 +52,14 @@ Provide a concise summary:
 
 ## E) Team News (whatsup integration — Nyia mode only, opt-in)
 
-After state reconstruction, optionally surface team news via the `/whatsup` skill:
+After state reconstruction, optionally surface team news via the `/nyia-whatsup` skill:
 
 - Only when `NYIA_WHATSUP_ENABLED=true` AND `NYIA_WHATSUP_AUTO_READ=kickoff`.
-  Resolve both with `nyia config view whatsup_enabled` / `nyia config view
-  whatsup_auto_read` if the CLI is available, otherwise read
-  `.nyiakeeper/nyia.conf` then `~/.config/nyiakeeper/config/nyia.conf`. Defaults
+  Read `NYIA_WHATSUP_ENABLED` / `NYIA_WHATSUP_AUTO_READ` from the environment if the host
+  exported them, otherwise read `.nyiakeeper/nyia.conf` then
+  `~/.config/nyiakeeper/config/nyia.conf` (the host CLI is not available in the container). Defaults
   are `false` / `never` — if so, skip this section entirely (no token cost).
-- If enabled, run `/whatsup` in read mode and display unread entries. Show any
+- If enabled, run `/nyia-whatsup` in read mode and display unread entries. Show any
   `breaking` entries prominently (visual box) and remind the user they remain
-  flagged until `/whatsup ack <id>`.
+  flagged until `/nyia-whatsup ack <id>`.
 - If `.nyiakeeper/` is absent (standalone mode), skip this section.

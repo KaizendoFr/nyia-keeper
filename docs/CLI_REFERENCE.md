@@ -197,18 +197,25 @@ Multiple accounts per assistant, and optional per-profile content. See
 ### Plan tracking (`nyia plans` / `nyia todo`) {#plan-tracking}
 
 Nyia keeps execution plans and a generated todo inventory under `.nyiakeeper/plans/`; the built-in
-skills (`/make-a-plan`, `/implement-plan`, `/plan-review`, `/code-review`) read and write them. The
+skills (`/nyia-make-a-plan`, `/nyia-implement-plan`, `/nyia-plan-review`, `/nyia-code-review`) read and write them. The
 command is `nyia plans` (plural).
+
+`nyia` runs on the **host only** — it is never inside the assistant container. The skills work with the
+files directly (a plan's `Status:` line, `decisions.md` entries, the read-only `todo.md`); the host regenerates
+`todo.md` automatically at every launch and after every session. The file formats are the contract:
+[PLAN_FILE_CONTRACT.md](PLAN_FILE_CONTRACT.md). Decisions are recorded by appending an entry to a plan's
+`decisions.md` in that format (the former `nyia plans decision add` command was removed in Plan 337).
+Built-in skills are Nyia-owned and refreshed on every upgrade — customize through your own skills, a team
+directory or an overlay, never by editing a shipped copy.
 
 | Command | Description |
 |---------|-------------|
 | `nyia plans migrate [--dry-run\|--yes]` | Migrate flat `plans/NNN-*.md` to per-plan directories, or finalize a migration that stopped early (a full backup is made first). Reviews whose plan number has no body are routed to the nearest exact plan or left flat and named in `plans/migration-notes.md` — they never block |
-| `nyia plans status` | Show the detected plan layout (`empty` \| `new` \| `legacy` \| `mixed`) and whether the migration is finalized (`.layout-v2`) |
+| `nyia plans status` | Show the detected plan layout (`empty` \| `new` \| `legacy` \| `mixed`), whether the migration is finalized (`.layout-v2`), and any directories under `plans/` that are not plan directories (nested trees, empty numbered dirs) |
 | `nyia plans todo [--write]` | The generated plan inventory (alias of `nyia todo`) |
 | `nyia plans status-backfill [--yes]` | Write a canonical `Status:` into plans that lack one (dry-run by default) |
-| `nyia plans decisions [N] [--by X] [--since]` | Show recorded decisions for plan N (or all plans) |
-| `nyia plans decision add <N> --by X --topic .. --question .. --decision .. [--options ..] [--supersedes ..]` | Record a decision |
-| `nyia todo [--write]` | Show — or regenerate with `--write` — the generated plan inventory |
+| `nyia plans decisions [N] [--by X] [--since]` | Show recorded decisions for plan N (or all plans); a malformed hand-edited entry is named as a warning, the rest still renders |
+| `nyia todo [--write]` | Show — or regenerate with `--write` — the generated plan inventory (also regenerated automatically at launch and after each session; a hand-written `todo.md` is never overwritten) |
 
 ### Configuration
 

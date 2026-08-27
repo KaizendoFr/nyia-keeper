@@ -1,16 +1,16 @@
 ---
-name: whatsup
-description: Team news distribution. Read what teammates changed (skills, prompts, conventions) since your last session, or publish a news entry after shipping something worth knowing about. Use /whatsup to read, /whatsup add to publish.
+name: nyia-whatsup
+description: Team news distribution. Read what teammates changed (skills, prompts, conventions) since your last session, or publish a news entry after shipping something worth knowing about. Use /nyia-whatsup to read, /nyia-whatsup add to publish.
 ---
 
 # whatsup - Team News
 
-"Nyia" (にゃ) is the cat that watches your code. `/whatsup` is the cat telling you
+"Nyia" (にゃ) is the cat that watches your code. `/nyia-whatsup` is the cat telling you
 what changed. Teammates ship skills, prompt edits, and convention changes;
-`/whatsup` makes that discoverable instead of accidental.
+`/nyia-whatsup` makes that discoverable instead of accidental.
 
 This skill has an **agnostic core** (read / add / ack / hide / list) that works
-anywhere, plus **Nyia integration** (kickoff/checkpoint hooks, config gating)
+anywhere, plus **Nyia integration** (`/nyia-kickoff` / `/nyia-checkpoint` hooks, config gating)
 that activates only inside a Nyia Keeper project.
 
 ## Environment Detection (do this FIRST)
@@ -20,7 +20,7 @@ Decide the storage root before any other action:
 1. If `.nyiakeeper/` exists in the project root → **Nyia mode**.
    - Entries: `.nyiakeeper/whatsup/entries/`
    - Read state: `.nyiakeeper/whatsup/.seen.json` (gitignored)
-   - Lifecycle hooks (kickoff/checkpoint) and config gating are available.
+   - Lifecycle hooks (`/nyia-kickoff` / `/nyia-checkpoint`) and config gating are available.
 2. If `.nyiakeeper/` is absent → **standalone mode**.
    - Entries: `.whatsup/entries/`
    - Read state: `.whatsup/.seen.json`
@@ -107,7 +107,7 @@ fresh file. Always write valid JSON; never crash on a corrupt state file.
 
 ## Commands
 
-### `/whatsup` (read mode)
+### `/nyia-whatsup` (read mode)
 
 1. Detect environment and storage root.
 2. Read `.seen.json` (or treat all as unread if absent).
@@ -117,10 +117,10 @@ fresh file. Always write valid JSON; never crash on a corrupt state file.
    Breaking first, then important, then info.
 5. After display, add the shown entry IDs to `seen` and update `last_run`, then
    write `.seen.json`. (`breaking` entries are NOT auto-acked — they stay flagged
-   until the user runs `/whatsup ack <id>`.)
+   until the user runs `/nyia-whatsup ack <id>`.)
 6. If there are no unread entries, say so briefly: "No new team news."
 
-### `/whatsup add` (publish mode)
+### `/nyia-whatsup add` (publish mode)
 
 Follow draft → confirm → commit:
 
@@ -143,17 +143,17 @@ Follow draft → confirm → commit:
    - In standalone mode (or no git), just write the file and tell the user it is
      not committed.
 
-### `/whatsup ack <id>`
+### `/nyia-whatsup ack <id>`
 
 Add `<id>` to `acked` (and `seen`) in `.seen.json`, write it back. This dismisses
 a `breaking` entry's warning. For `info`/`important`, ack is optional.
 
-### `/whatsup hide <id>`
+### `/nyia-whatsup hide <id>`
 
 Add `<id>` to `hidden` in `.seen.json`. Hidden entries are permanently excluded
 from read/list output ("not for me"). This does not delete the entry file.
 
-### `/whatsup list`
+### `/nyia-whatsup list`
 
 Show ALL entries (newest first) with a read/unread/hidden marker each, regardless
 of seen state. Format: `<marker> [<severity>] <title> — <author>, <date> (<id>)`.
@@ -165,24 +165,24 @@ info:      📰 • [info] Title — author, date
 important: 📰 • [important] Title — author, date   (shown at top of list)
 breaking:  ╔══════════════════════════════════╗
            ║ ⚠️  BREAKING — Title              ║
-           ║ Author: x | /whatsup ack <id>    ║
+           ║ Author: x | /nyia-whatsup ack <id>    ║
            ╚══════════════════════════════════╝
 ```
 
 - `info` — inline list entry.
 - `important` — bullet pulled to the top of the list.
 - `breaking` — full visual box; remains flagged on every read until the user runs
-  `/whatsup ack <id>`. V1 is a loud visual warning only — it does NOT block.
+  `/nyia-whatsup ack <id>`. V1 is a loud visual warning only — it does NOT block.
 
 ## Nyia Lifecycle Integration (Nyia mode only)
 
 These hooks only fire when `NYIA_WHATSUP_ENABLED=true` in config. They are wired
-from the `/kickoff` and `/checkpoint` skills:
+from the `/nyia-kickoff` and `/nyia-checkpoint` skills:
 
-- **kickoff**: if `NYIA_WHATSUP_AUTO_READ=kickoff`, run read mode after state
+- **`/nyia-kickoff`**: if `NYIA_WHATSUP_AUTO_READ=kickoff`, run read mode after state
   reconstruction and surface unread entries (breaking ones prominently).
-- **checkpoint**: if the session modified meta-files (skills, prompts, shared
-  config, `*.conf` under `.nyiakeeper/`), prompt the user to publish a `/whatsup`
+- **`/nyia-checkpoint`**: if the session modified meta-files (skills, prompts, shared
+  config, `*.conf` under `.nyiakeeper/`), prompt the user to publish a `/nyia-whatsup`
   entry so the team sees the change.
 
 ### Reading config values
@@ -191,9 +191,9 @@ Config is gated by two keys resolved via Nyia's config system:
 - `NYIA_WHATSUP_ENABLED` (`true` | `false`, default `false`)
 - `NYIA_WHATSUP_AUTO_READ` (`kickoff` | `never`, default `never`)
 
-To read the effective value, prefer `nyia config view whatsup_enabled` /
-`nyia config view whatsup_auto_read` if the `nyia` CLI is on PATH. Otherwise read
-the config files directly in precedence order (project `.nyiakeeper/nyia.conf`
+To read the effective value, use the `NYIA_WHATSUP_ENABLED` / `NYIA_WHATSUP_AUTO_READ`
+environment variables if the host exported them (the host `nyia` CLI is not available
+inside the container). Otherwise read the config files directly in precedence order (project `.nyiakeeper/nyia.conf`
 then global `~/.config/nyiakeeper/config/nyia.conf`) and look for the
 `NYIA_WHATSUP_ENABLED` / `NYIA_WHATSUP_AUTO_READ` lines. If neither is set, use
 the defaults (`false` / `never`) — which means the hooks do nothing.

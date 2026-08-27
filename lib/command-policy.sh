@@ -886,7 +886,7 @@ _resolve_workspace_sync_config() {
 
 # Unified resolver for whatsup config keys (Plan 258)
 # Precedence: project .nyiakeeper/nyia.conf (safe parsed) > global config > default.
-# Used by /kickoff and /checkpoint hooks and by `nyia config view`.
+# Used by /nyia-kickoff and /nyia-checkpoint hooks and by `nyia config view`.
 # Arguments:
 #   $1 - internal key name (NYIA_WHATSUP_ENABLED | NYIA_WHATSUP_AUTO_READ)
 #   $2 - default value to fall back to

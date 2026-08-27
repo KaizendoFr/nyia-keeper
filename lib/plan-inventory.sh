@@ -30,12 +30,15 @@ _inventory_scan() {
     local dir="${1:-$NYIA_PLANS_DIR}" d f base key slug
     for d in "$dir"/[0-9]*-*/; do                        # new-shape: plans/<key>-<slug>/plan.md
         [[ -d "$d" && -f "${d}plan.md" ]] || continue
-        base="$(basename "${d%/}")"; key="${base%%-*}"; slug="${base#*-}"
+        base="$(basename "${d%/}")"
+        case "$base" in *$'\t'*|*$'\n'*) continue ;; esac   # 337 security review: a name must not forge rows
+        key="${base%%-*}"; slug="${base#*-}"
         _inventory_emit "$key" "$slug" "${d}plan.md"
     done
     for f in "$dir"/[0-9]*-*.md; do                      # legacy flat: plans/<key>-<slug>.md
         [[ -f "$f" ]] || continue
         base="$(basename "$f")"
+        case "$base" in *$'\t'*|*$'\n'*) continue ;; esac   # same guard as the migration planner
         case "$base" in plan-review-*|pair-review-*|code-review-*) continue ;; esac
         base="${base%.md}"; key="${base%%-*}"; slug="${base#*-}"
         _inventory_emit "$key" "$slug" "$f"
@@ -68,6 +71,13 @@ generate_todo_inventory() {
 write_todo_inventory() {
     local dir="${1:-$NYIA_PLANS_DIR}" out="$2" tasks="${3:-}" tmp first=""
     [[ -n "$out" ]] || return 2
+    # 337 security review: this now fires automatically at launch/exit, on clones the user has not inspected.
+    # Never write through a link: a symlinked todo.md (or a symlinked parent / plans dir) would carry
+    # attacker-chosen content OUTSIDE the project (`mv` into a linked directory). Refuse, rc 4, name it.
+    if [[ -L "$out" || -d "$out" || -L "$(dirname "$out")" || -L "${dir%/}" ]]; then
+        printf 'refusing to write %s: it (or its directory) is a symlink/directory\n' "$out" >&2
+        return 4
+    fi
     # MF-1: NEVER clobber a hand-maintained file. Only (re)write a file that is absent or already generated
     # (first line == the GENERATED header). NYIA_TODO_FORCE=1 overrides. The live todo.md is gitignored, so
     # a blind overwrite of the pre-migration monolith would be unrecoverable.

@@ -44,7 +44,7 @@ work on a work branch; a mistake — yours or the agent's — is always recovera
 reviewable before it lands. It's a forcing function against inattention, not just a way to undo the
 AI.
 
-→ [Branch Management](BRANCH_MANAGEMENT.md), plus the built-in `code-review` and `checkpoint` steps.
+→ [Branch Management](BRANCH_MANAGEMENT.md), plus the built-in `nyia-code-review` and `nyia-checkpoint` steps.
 
 ## Where the network fits
 

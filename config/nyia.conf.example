@@ -44,8 +44,8 @@ NYIA_AUTO_BRANCH="false"
 NYIA_PROTECTED_BRANCHES=""
 
 # === WHATSUP NEWS ===
-# Team news distribution via the /whatsup skill. When enabled, lifecycle skills
-# (/kickoff and /checkpoint) integrate with whatsup to surface and prompt for
+# Team news distribution via the /nyia-whatsup skill. When enabled, lifecycle skills
+# (/nyia-kickoff and /nyia-checkpoint) integrate with whatsup to surface and prompt for
 # team news. Default disabled — opt-in to avoid extra token cost.
 #   NYIA_WHATSUP_ENABLED   - true | false (default: false)
 #   NYIA_WHATSUP_AUTO_READ - when to auto-read news at session start

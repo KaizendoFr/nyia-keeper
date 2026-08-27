@@ -1,6 +1,6 @@
 ---
-name: plan-review
-description: Review a plan or respond to a review as an architect. Supports round-trip review workflows between assistants with human-in-the-loop discussion. Use /plan-review plan {N} to review, /plan-review respond {N} to respond to a review.
+name: nyia-plan-review
+description: Review a plan or respond to a review as an architect. Supports round-trip review workflows between assistants with human-in-the-loop discussion. Use /nyia-plan-review plan {N} to review, /nyia-plan-review respond {N} to respond to a review.
 ---
 
 # Plan-Review - Architect Plan Review Skill
@@ -12,7 +12,7 @@ Supports two modes for round-trip plan review workflows between assistants.
 Parse the arguments to determine mode and plan reference:
 
 ```
-/plan-review [subcommand] <plan-ref> [as <lens>]
+/nyia-plan-review [subcommand] <plan-ref> [as <lens>]
 
 subcommand:
   "plan" or omitted  → PLAN MODE (reviewer writes/updates review)
@@ -33,7 +33,7 @@ lens (optional — plan mode only, shapes review perspective):
 ## B) Load Context (both modes)
 
 1. Resolve plan-ref to an actual plan file (`{N}-{slug}/plan.md` first, legacy flat `{N}-{slug}.md` as fallback). Search `.nyiakeeper/plans/` first, then `.nyiakeeper/shared/plans/` as fallback. Read it completely.
-2. Find review files matching: `plan-review-*-plan-{N}-*.md` OR `pair-review-*-plan-{N}-*.md` in the plan's `reviews/` directory (`.nyiakeeper/plans/{N}-{slug}/reviews/`); for a legacy flat plan, in the same directory as the plan file. `nyia plans migrate` moved the old flat reviews into `reviews/`.
+2. Find review files matching: `plan-review-*-plan-{N}-*.md` OR `pair-review-*-plan-{N}-*.md` in the plan's `reviews/` directory (`.nyiakeeper/plans/{N}-{slug}/reviews/`); for a legacy flat plan, in the same directory as the plan file. The host-side plan migration moved the old flat reviews into `reviews/`.
 3. Determine round number: count `## Round` headers in existing review file. Next = count + 1. No file = Round 1.
 4. Identify yourself (your assistant name) from context or environment.
 
@@ -170,12 +170,18 @@ You are the **plan author**. Someone else reviewed your plan.
    - **Record decisions (331c)**: each recommendation you accepted, rejected, or deferred is
      a decision — append it to the plan's append-only `decisions.md`:
      ```
-     nyia plans decision add {N} --by <who> --topic ".." --question ".." --decision "accepted|rejected|deferred: .." [--options ".."] [--supersedes <N>]
+     ## D-<YYYYMMDD>-<HHMMSS>-<random> (<YYYY-MM-DD>) · decided-by: <user|llm|assistant-name>
+     Topic: <one line>
+     Question: <one line>
+     Options: <one line, "|"-separated>
+     Decision: accepted|rejected|deferred: <one line>
+     Supersedes: <optional earlier id>
+     (append to `{N}-{slug}/decisions.md`, blank line before the entry, one line per field, no secrets — see docs/PLAN_FILE_CONTRACT.md)
      ```
      Use `--supersedes <N>` when the call reverses an earlier decision.
 
 6. **Guide next step**: Tell the human:
-   "Plan updated. To continue the review cycle, run `/plan-review plan {N}` on {reviewer}'s side."
+   "Plan updated. To continue the review cycle, run `/nyia-plan-review plan {N}` on {reviewer}'s side."
 
 ## F) Review Lenses (optional)
 
@@ -187,13 +193,13 @@ When a lens is specified, focus primarily through that lens while covering base 
 | **risk** | Edge cases, safety, undo | What goes wrong? How to reverse? |
 | **user** | Docs, help, UX, onboarding | User understands? Help updated? |
 | **ops** | Deploy, dist, verify, monitor | How shipped? How verified? |
-Default: **architect**. Multiple: `/plan-review plan 213 as risk,user`
+Default: **architect**. Multiple: `/nyia-plan-review plan 213 as risk,user`
 
 ## G) Key Rules
 
 - **Human-in-the-loop**: ALWAYS discuss before writing in both modes. Never auto-write.
 - **Confirmation gate**: In respond mode, NEVER edit the plan without explicit "yes" from the human.
-- **Backward compatible**: `/plan-review 121` (no subcommand) = plan mode.
+- **Backward compatible**: `/nyia-plan-review 121` (no subcommand) = plan mode.
 - **Delta = LLM comparison**: Compare plan content vs last review content. No git diff needed.
 - **One review file per pair**: `plan-review-{from}-for-{target}-plan-{N}-{slug}.md`, living in `plans/{N}-{slug}/reviews/`. Rounds append to the same file.
 - **Legacy file discovery**: Always search for both `plan-review-*` and `pair-review-*` prefixes when looking for existing review files, so that the 120+ existing `pair-review-*` files remain discoverable.

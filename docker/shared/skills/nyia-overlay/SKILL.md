@@ -1,5 +1,5 @@
 ---
-name: overlay
+name: nyia-overlay
 description: Create Docker overlay Dockerfiles for Nyia Keeper projects. Knows overlay file paths, Dockerfile conventions, and nyia build/run commands. Use when a user wants to customize their assistant Docker image with additional packages or tools.
 ---
 

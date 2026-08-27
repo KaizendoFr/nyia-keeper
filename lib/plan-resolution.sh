@@ -33,13 +33,26 @@ resolve_plan_file() {
     return 1
 }
 
+# plan_slug_is_subnumbered <dir-basename> — "NNN[a]-<digit>…" (e.g. 73e-1-spin-off, 75-0-subplan) is NOT a
+#   distinct plan number in the grammar: it parses as NNN[a] and, because '-' sorts before letters, it sorts
+#   FIRST among its siblings. Plan 337: such a sibling must never steal its parent's identity.
+#   Shape: NNN[a]-<digits>-… or NNN[a]-<digits> exactly — a slug whose first WORD merely starts with a digit
+#   (42-2fa-login, 42-3d-viewer) is a normal plan (code review 337).
+plan_slug_is_subnumbered() { [[ "$1" =~ ^[0-9]+[a-z]?-[0-9]+(-|$) ]]; }
+
 # resolve_plan_dir <N> — print the plan DIRECTORY (new shape only), return 0; non-zero for legacy/absent.
+#   Tie-break (Plan 337, one rule for the resolver AND the migrator): among several dirs for one number,
+#   the first NON-sub-numbered sibling (the parent) wins; otherwise the first sorted.
 resolve_plan_dir() {
-    local n="$1" d
+    local n="$1" d first=""
     [[ "$n" =~ ^[0-9]+[a-z]?$ ]] || return 2   # shape guard: exact NNN[a] only (no glob/traversal)
     for d in "$NYIA_PLANS_DIR/$n"-*/; do
-        [[ -d "$d" && -f "${d}plan.md" ]] && { printf '%s\n' "${d%/}"; return 0; }
+        [[ -d "$d" && -f "${d}plan.md" ]] || continue
+        d="${d%/}"
+        [[ -z "$first" ]] && first="$d"
+        plan_slug_is_subnumbered "$(basename "$d")" || { printf '%s\n' "$d"; return 0; }
     done
+    [[ -n "$first" ]] && { printf '%s\n' "$first"; return 0; }
     return 1
 }
 
@@ -137,7 +150,7 @@ read_plan_status() {
 # read_plan_roadmap <plan_file> — print the plan's OPTIONAL free-text `Roadmap:` label (e.g. poc / mvp /
 # RC1), or nothing when absent. Mirrors read_plan_status (fence-aware, first non-fenced match wins) but the
 # label is FREE TEXT (no enum, no legacy mapping), and an absent field is NORMAL — empty output, return 0,
-# no warning. Used by the /plan-status skill to group plans by roadmap axis. Plan 335.
+# no warning. Used by the /nyia-plan-status skill to group plans by roadmap axis. Plan 335.
 read_plan_roadmap() {
     local f="$1" val="" in_fence=0 line
     [[ -f "$f" ]] || return 0

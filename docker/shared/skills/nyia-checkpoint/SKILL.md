@@ -1,5 +1,5 @@
 ---
-name: checkpoint
+name: nyia-checkpoint
 description: Save session state before context compaction or shutdown. Updates todo.md, context.md, and active plans to preserve work continuity. Use before ending a session or when context is getting large.
 ---
 
@@ -15,7 +15,7 @@ When invoked, do the following:
 
 ## B) Plan Status Drives the Inventory (do not hand-edit todo.md)
 
-`todo.md` is a generated, read-only inventory (`nyia todo`) built from each plan's `Status:`
+`todo.md` is a generated, read-only inventory (written by the host `nyia` at launch and after the session — it is not available inside the container) built from each plan's `Status:`
 field — there is nothing to hand-edit there. To reflect progress, update the plan's `Status:`
 (see D), not the inventory:
 
@@ -67,24 +67,25 @@ Output to user:
 - [Key decision or discovery that MUST be preserved]
 - [Current blocker or pending question]
 
-**Resume command**: `/kickoff` or continue with [specific task]
+**Resume command**: `/nyia-kickoff` or continue with [specific task]
 ```
 
 ## F) Publish Team News (whatsup integration — Nyia mode only, opt-in)
 
 Before final checks, detect whether this session changed meta-files and, if so,
-offer to publish a `/whatsup` news entry so the team learns about it:
+offer to publish a `/nyia-whatsup` news entry so the team learns about it:
 
-- Only when `NYIA_WHATSUP_ENABLED=true`. Resolve with `nyia config view
-  whatsup_enabled` if the CLI is available, otherwise read `.nyiakeeper/nyia.conf`
-  then `~/.config/nyiakeeper/config/nyia.conf`. Default is `false` — if so, skip
+- Only when `NYIA_WHATSUP_ENABLED=true`. Read it from the environment if the host
+  exported it, otherwise read `.nyiakeeper/nyia.conf` then
+  `~/.config/nyiakeeper/config/nyia.conf` (the host CLI is not available in the
+  container). Default is `false` — if so, skip
   this section. If `.nyiakeeper/` is absent (standalone mode), skip.
 - Meta-file detection (generic, cross-assistant — no Claude-specific paths):
   anything under `~/.config/nyiakeeper/`, `.nyiakeeper/shared/`,
   `.nyiakeeper/*/SKILL.md`, or any `*.conf` under `.nyiakeeper/`. Pure code
   changes do NOT trigger this.
 - If meta-files changed, ask: "This session changed [list paths]. Publish a
-  /whatsup entry so the team sees it?" If yes, hand off to `/whatsup add`
+  /nyia-whatsup entry so the team sees it?" If yes, hand off to `/nyia-whatsup add`
   (draft → confirm → commit).
 - NO-SECRETS RULE: summarize changes by path and the user's own words only.
   Never copy config/prompt/credential contents into a news entry — entries are

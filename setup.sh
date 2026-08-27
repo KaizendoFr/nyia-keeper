@@ -123,23 +123,17 @@ fi
 # These become visible to --list-skills and get propagated to assistants at launch
 _nyia_home="${XDG_CONFIG_HOME:-$HOME/.config}/nyiakeeper"
 if [[ -d "docker/shared/skills" ]]; then
-    mkdir -p "$_nyia_home/skills"
-    _seeded=0
-    _kept=0
-    for _skill_dir in docker/shared/skills/*/; do
-        [[ -d "$_skill_dir" ]] || continue
-        _skill_name=$(basename "$_skill_dir")
-        # Only seed directories containing SKILL.md (symmetry with discovery)
-        [[ -f "$_skill_dir/SKILL.md" ]] || continue
-        # No-clobber: do not overwrite user-customized skills on upgrade
-        if [[ ! -d "$_nyia_home/skills/$_skill_name" ]]; then
-            cp -r "$_skill_dir" "$_nyia_home/skills/$_skill_name"
-            _seeded=$((_seeded + 1))
-        else
-            _kept=$((_kept + 1))
-        fi
-    done
-    echo "✅ Skills: $_seeded seeded, $_kept already present → $_nyia_home/skills/"
+    # Plan 337: shipped built-ins are Nyia-owned — refreshed on every install/upgrade (marker written), stale
+    # propagated copies pruned only when they are byte-identical to the previous shipped copy, user-owned copies
+    # kept and named. Logic lives in lib/skill-seeding.sh (unit-tested); this script only wires it.
+    if [[ -f lib/skill-seeding.sh ]]; then
+        # shellcheck source=/dev/null
+        source lib/skill-seeding.sh
+        seed_builtin_skills "docker/shared/skills" "$_nyia_home" "$(cat VERSION 2>/dev/null || echo unknown)" "${NYIA_TEAM_DIR:-}"
+    else
+        echo "⚠️  lib/skill-seeding.sh not found — built-in skills not seeded" >&2
+    fi
+    # Old-named shipped skills (Plan 237/338 rename map) are removed by seed_builtin_skills itself — one owner.
 fi
 
 # Cross-platform sed in-place (BSD sed on macOS requires '' backup arg)

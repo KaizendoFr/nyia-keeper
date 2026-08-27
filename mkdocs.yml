@@ -74,6 +74,7 @@ nav:
       - Windows (WSL2): WSL2_SETUP.md
   - Reference:
       - CLI Reference: CLI_REFERENCE.md
+      - Plan file contract (host/container): PLAN_FILE_CONTRACT.md
       - Configuration: CONFIGURATION.md
       - Assistant Agent Matrix: assistant-agents-matrix.md
   - Troubleshooting: TROUBLESHOOTING.md

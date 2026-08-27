@@ -416,18 +416,22 @@ WORKSPACE_TEMPLATE
     # while the store is legacy and STOPS the launch unless the store is migrated or the user explicitly insists
     # on the old layout — running the new skills against an un-migrated store is broken. The helper prints its
     # own messages; a RELAUNCH return means "stop cleanly here" (never crashes the launch).
+    local _plans_lib="$script_dir/../lib/plan-commands.sh"
+    [[ -f "$_plans_lib" ]] || _plans_lib="$script_dir/../lib/nyiakeeper/plan-commands.sh"
+    [[ -f "$_plans_lib" ]] && { source "$_plans_lib" 2>/dev/null || true; }
     if [[ -t 0 ]]; then
         # Plan 331f: a once-ever heads-up that the plan layout changed — the preamble to the first migration
         # prompt. Durable marker in the config home; best-effort (never fails the launch). Lives in auto-update.sh.
         type _maybe_show_layout_change_notice &>/dev/null && _maybe_show_layout_change_notice || true
-        local _plans_lib="$script_dir/../lib/plan-commands.sh"
-        [[ -f "$_plans_lib" ]] || _plans_lib="$script_dir/../lib/nyiakeeper/plan-commands.sh"
-        if [[ -f "$_plans_lib" ]] && source "$_plans_lib" 2>/dev/null && type maybe_offer_plan_migration &>/dev/null; then
+        if type maybe_offer_plan_migration &>/dev/null; then
             local _mrc=0
             maybe_offer_plan_migration "$PROJECT_PATH" "" "${config_assistant_name:+nyia-$config_assistant_name}" || _mrc=$?
             [[ "$_mrc" -eq "${NYIA_MIGRATION_RELAUNCH:-20}" ]] && exit 0
         fi
     fi
+    # Plan 337: the HOST regenerates the plan inventory (todo.md) before the session — `nyia` never runs inside
+    # the container, so skills only read it. Best-effort, one hint line at most, never blocks the launch.
+    type refresh_todo_inventory_quiet &>/dev/null && { refresh_todo_inventory_quiet "$PROJECT_PATH" --hint || true; }
 
     # Execute assistant using abstracted functions
     # Note: DEV_MODE removed as dead code (--dev requires --build, never reaches RUN)

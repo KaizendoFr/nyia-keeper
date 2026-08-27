@@ -1348,6 +1348,17 @@ backup_assistant_config() {
 # Copy user skills from central directory to assistant's mounted config dir.
 # Only copies directories containing SKILL.md (no-clobber: skips existing).
 # Target is the host path mounted into container, so skills are visible in session.
+# _skill_target_replaceable <dir> — Plan 337: a propagation target may be replaced iff it is absent, or it is
+# a shipped built-in copy (carries the .nyia-builtin marker written at seeding time). Anything else — a
+# user-authored skill, a team/shared override, a symlink — is user-owned and is never clobbered.
+# ONE predicate for every layer (global → assistant, team → assistant, shared → assistant, image → box).
+_skill_target_replaceable() {
+    local t="$1"
+    [[ -L "$t" ]] && return 1
+    [[ ! -e "$t" ]] && return 0
+    [[ -d "$t" && -f "$t/.nyia-builtin" ]]
+}
+
 propagate_user_skills() {
     local assistant_cli="$1"
     local nyiakeeper_home="$2"
@@ -1357,6 +1368,19 @@ propagate_user_skills() {
     local source_dir="$(_profile_content_source_dir "$nyiakeeper_home" "skills")"
     local target_dir="$(_propagation_auth_dir "$nyiakeeper_home" "$assistant_cli")/skills"
 
+    # Plan 338: an OLDER image re-seeds the old-named built-ins (kickoff, …) into the mounted assistant dir on
+    # every launch until it is rebuilt/pulled — remove them again here (idempotent, silent when clean; a
+    # user-authored copy under an old name is kept). Same rule and same lib as the installer.
+    local _seed_lib="$script_dir/../lib/skill-seeding.sh"
+    [[ -f "$_seed_lib" ]] || _seed_lib="$script_dir/../lib/nyiakeeper/skill-seeding.sh"   # installed layout
+    if ! declare -F remove_stale_shipped_skills >/dev/null 2>&1 && [[ -f "$_seed_lib" ]]; then
+        # shellcheck source=/dev/null
+        source "$_seed_lib" 2>/dev/null || true
+    fi
+    if declare -F remove_stale_shipped_skills >/dev/null 2>&1; then
+        remove_stale_shipped_skills "$nyiakeeper_home" "" 0 1 >&2 || true
+    fi
+
     # Silent no-op if user hasn't created a skills directory
     if [[ ! -d "$source_dir" ]]; then
         return 0
@@ -1364,6 +1388,7 @@ propagate_user_skills() {
 
     local copied=0
     local skipped=0
+    local refreshed=0
 
     for skill_dir in "$source_dir"/*/; do
         # Skip if glob didn't match (no subdirectories)
@@ -1377,12 +1402,13 @@ propagate_user_skills() {
             continue
         fi
 
-        # No-clobber: skip if target already exists
-        if [[ -d "$target_dir/$skill_name" ]]; then
-            print_verbose "User skill '$skill_name' already exists at target, skipping"
+        # Plan 337: a shipped built-in (marker) is refreshed every launch; a user-owned target is never clobbered
+        if ! _skill_target_replaceable "$target_dir/$skill_name"; then
+            print_verbose "User skill '$skill_name' already exists at target (user-owned), skipping"
             skipped=$((skipped + 1))
             continue
         fi
+        [[ -e "$target_dir/$skill_name" ]] && { rm -rf "$target_dir/$skill_name"; refreshed=$((refreshed + 1)); }
 
         # Copy skill directory to assistant target
         mkdir -p "$target_dir"
@@ -1393,6 +1419,9 @@ propagate_user_skills() {
 
     if [[ $copied -gt 0 ]]; then
         print_verbose "Propagated $copied user skill(s) to $assistant_cli ($skipped already existed)"
+    fi
+    if [[ $refreshed -gt 0 ]]; then
+        print_status "🔄 $refreshed built-in skill(s) refreshed for $assistant_cli"   # Plan 337: say what was replaced
     fi
 }
 
@@ -1480,16 +1509,18 @@ propagate_shared_skills() {
             continue
         fi
 
-        # No-clobber: skip if target already exists
-        if [[ -d "$target_dir/$skill_name" ]]; then
-            print_verbose "Shared skill '$skill_name' already exists at target, skipping"
+        # Plan 337: a shipped built-in at the target (marker) yields to the shared override; user-owned is kept
+        if ! _skill_target_replaceable "$target_dir/$skill_name"; then
+            print_verbose "Shared skill '$skill_name' already exists at target (user-owned), skipping"
             skipped=$((skipped + 1))
             continue
         fi
+        rm -rf "$target_dir/$skill_name"
 
         # Copy skill directory to assistant project dir
         mkdir -p "$target_dir"
         cp -r "$skill_dir" "$target_dir/$skill_name"
+        rm -rf "$target_dir/$skill_name/.nyia-builtin"  # 337: an override is user-owned even if cloned from a built-in (-rf: a planted DIR must not abort the launch)
         print_verbose "Propagated shared skill '$skill_name' to .$assistant_cli"
         copied=$((copied + 1))
     done
@@ -1710,16 +1741,19 @@ propagate_team_skills() {
             continue
         fi
 
-        # No-clobber: skip if target already exists (user skill wins)
-        if [[ -e "$target_dir/$skill_name" || -L "$target_dir/$skill_name" ]]; then
-            print_verbose "Team skill '$skill_name' already exists at target, skipping"
+        # Plan 337: a shipped built-in at the target (marker) yields to the team override; a user skill or a
+        # symlink at the target wins (shield: never follow / never replace a link).
+        if ! _skill_target_replaceable "$target_dir/$skill_name"; then
+            print_verbose "Team skill '$skill_name' already exists at target (user-owned), skipping"
             skipped=$((skipped + 1))
             continue
         fi
+        [[ -e "$target_dir/$skill_name" ]] && rm -rf "$target_dir/$skill_name"
 
         # Safe copy (no-deref, per-item atomic) to assistant config
         mkdir -p "$target_dir"
         if _safe_copy_item "$skill_dir" "$target_dir/$skill_name"; then
+            rm -rf "$target_dir/$skill_name/.nyia-builtin"  # 337: an override is user-owned even if cloned from a built-in (-rf: a planted DIR must not abort the launch)
             print_verbose "Propagated team skill '$skill_name' to $assistant_cli"
             copied=$((copied + 1))
         else
@@ -3645,6 +3679,22 @@ get_canonical_container_path() {
     echo "/project/${sanitized}-${hash}"
 }
 
+# finish_container_session <project_path> <rc> — Plan 337: everything that must run AFTER the container
+# returns, REGARDLESS of its exit code (under set -e a non-zero rc / Ctrl-C used to skip all of it):
+# secrets cleanup, the git-history notice, and the plan-inventory regeneration (the session may have
+# changed Status: lines; nyia never runs inside the box, so the host writes todo.md here). Returns <rc>
+# so the launcher still exits with the container's status.
+finish_container_session() {
+    local project_path="$1" rc="${2:-0}"
+    cleanup_env_file
+    git_history_post_session_notice "$project_path"
+    if declare -F refresh_todo_inventory_quiet >/dev/null 2>&1; then
+        refresh_todo_inventory_quiet "$project_path" || true
+    fi
+    trap - EXIT
+    return "$rc"
+}
+
 run_docker_container() {
     local full_image_name="$1"
     local project_path="$2"
@@ -3959,6 +4009,7 @@ run_docker_container() {
     local tty_args=(-i)
     [[ -t 0 && -t 1 ]] && tty_args=(-it)
 
+    local _drc=0                     # Plan 337: capture the container rc; post-session work must still run
     docker run "${tty_args[@]}" --rm \
         $(get_docker_network_args) \
         $(get_docker_user_args) \
@@ -3974,12 +4025,10 @@ run_docker_container() {
         "${credential_mounts[@]}" \
         "${docker_env_args[@]}" \
         --name "$container_name" \
-        "$full_image_name" "${final_args[@]}"
+        "$full_image_name" "${final_args[@]}" || _drc=$?
 
-    # Cleanup immediately after Docker run
-    cleanup_env_file
-    git_history_post_session_notice "$project_path"
-    trap - EXIT
+    # Cleanup + inventory regen immediately after Docker run, whatever the rc (Plan 337)
+    finish_container_session "$project_path" "$_drc"
 }
 
 # Run interactive login using the assistant container

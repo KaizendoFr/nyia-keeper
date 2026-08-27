@@ -31,17 +31,41 @@ itself current — the shared inventory is GENERATED from the plans, never autho
   `.nyiakeeper/plans/NNN-slug/plan.md` (enum: `Draft Ready Active Blocked Review Done Dropped`). The skills
   you invoke maintain this as they work — you rarely set it by hand.
 - Make a directional or user decision → append it to that plan's `.nyiakeeper/plans/NNN-slug/decisions.md`
-  (via make-a-plan, plan-review, or `nyia plans decision add`) — the *why*, so it isn't re-litigated later.
+  (via `/nyia-make-a-plan`, `/nyia-plan-review`, or by appending an entry in the decisions.md format) — the *why*, so it isn't re-litigated later.
 - Discover a durable, non-obvious fact about the project → record it in your `context.md`.
 
 **SESSION BRIDGE**: before ending a work session, make sure each plan you touched has an accurate `Status:`
 and your context.md notes what's next. **WORK LOSS IS UNACCEPTABLE** — continuity lives in the plan files.
 
+## Nyia Skill Set [MANDATORY]
+
+Every Nyia skill is a slash command prefixed **`nyia-`** — type `/nyia-` to list the whole set. Any other slash
+command is the assistant CLI's own or one of yours; for plan work use the Nyia one (e.g. `/nyia-code-review`, not
+the assistant CLI's own code-review command).
+
+| Skill | Use it when |
+|-------|-------------|
+| `/nyia-kickoff` | at the START of every session — rebuilds state from `.nyiakeeper/` and proposes the next steps |
+| `/nyia-checkpoint` | BEFORE ending a session or when context runs long — saves plan `Status:`, context.md, next steps |
+| `/nyia-make-a-plan` | any non-trivial task — a phased, resumable plan under `.nyiakeeper/plans/` |
+| `/nyia-plan-review` | review a plan (or respond to a review) as an architect — round-trips between assistants |
+| `/nyia-implement-plan` | execute ONE plan with pre-flight checks, per-step verification and regression detection |
+| `/nyia-run-plans` | execute several Ready plans in safe parallel batches |
+| `/nyia-code-review` | after implementing a plan — pragmatic, security-first review of the actual code |
+| `/nyia-plan-status` | "where are we?" — a filterable table of plans by status / roadmap label |
+| `/nyia-show-decisions` | the decision trail of a plan — what was decided, by whom, and why |
+| `/nyia-share` | promote / demote plans between private and team-shared |
+| `/nyia-whatsup` | team news — read what changed since your last session, or publish an entry |
+| `/nyia-overlay` | customize the assistant's Docker image with extra packages or tools |
+
+Lifecycle rule: `/nyia-kickoff` first, `/nyia-checkpoint` last.
+
 ## Context Management Protocol [MANDATORY]
 
 ### On EVERY Session Start - MANDATORY EXECUTION:
-1. **Read the plan inventory FIRST**: run `nyia todo` — a GENERATED, read-only view of every plan and its
-   `Status:` (this is what `.nyiakeeper/todo.md` contains). Never hand-edit it.
+1. **Read the plan inventory FIRST**: `.nyiakeeper/todo.md` — a GENERATED, read-only view of every plan and its
+   `Status:`, written by the host `nyia` at launch and after the session (`nyia` is not available inside the
+   container). Never hand-edit it; if it looks stale, read each plan's `Status:` line instead.
 2. **Read your context.md**: Understand exactly where the previous session left off.
 3. **Open the active plans**: read the `plans/NNN-slug/plan.md` of anything `Active`/`Review`/`Blocked` completely.
 4. **NEVER assume project state**: read the files; a plan with no `Status:` field is treated as `Draft`.
@@ -66,7 +90,7 @@ and your context.md notes what's next. **WORK LOSS IS UNACCEPTABLE** — continu
 The plan's `Status:` field replaces the old kanban columns. Maintain it AS YOU WORK (the plan-touching
 skills do this for you): `Draft` (created) → `Ready` (approved) → `Active` (implementing) → `Review`
 (under code-review) → `Done`; `Blocked` when stuck; `Dropped` if abandoned. To change what the board shows,
-change a plan's `Status:` (or add a plan) — then regenerate the inventory with `nyia todo --write`. Do NOT
+change a plan's `Status:` (or add a plan) — the host regenerates the inventory at the next launch/exit. Do NOT
 move lines around in `todo.md` by hand; it is regenerated and your edits are lost.
 
 ## Development Helper Scripts [MANDATORY POLICY]
@@ -119,12 +143,12 @@ move lines around in `todo.md` by hand; it is regenerated and your edits are los
 - **Product functionality**: Core product capabilities
 
 ### The plan inventory (`todo.md`) is GENERATED — never author it by hand:
-`nyia todo` renders one line per plan from each `plans/NNN-slug/plan.md` `Status:` field (worst status
+The host's inventory generator renders one line per plan from each `plans/NNN-slug/plan.md` `Status:` field (worst status
 first) and writes it to `.nyiakeeper/todo.md` with a "GENERATED — do not edit" header. You never type this
 file; to change what it shows, change a plan's `Status:` (or add a plan), then it regenerates. Illustrative
-output (what `nyia todo` prints — do not hand-write):
+output (what the host generates — do not hand-write):
 ```
-# Plan inventory — GENERATED by `nyia todo` (do not edit)
+# Plan inventory — GENERATED (do not edit)
 - 331   Active    evolve work-tracking (meta)
 - 42    Blocked   user authentication
 - 04    Ready     API input validation

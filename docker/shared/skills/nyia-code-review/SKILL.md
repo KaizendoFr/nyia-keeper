@@ -1,5 +1,5 @@
 ---
-name: code-review
+name: nyia-code-review
 description: Post-implementation code reviewer. Reads the plan, reads the actual code, and reviews pragmatically. Focuses on working code, security, and best practices. Not perfectionist about style. Use after implementing a plan to verify quality.
 ---
 
@@ -10,7 +10,7 @@ Review code that was written to implement a plan. Focus on what matters: does it
 ## A) Argument Parsing
 
 ```
-/code-review [plan-ref] [--files file1 file2 ...]
+/nyia-code-review [plan-ref] [--files file1 file2 ...]
 
 plan-ref:
   Number (e.g., "197")     -> find the plan's directory .nyiakeeper/plans/197-*/plan.md (per-plan layout), then legacy flat .nyiakeeper/plans/197-*.md, then the same two shapes under .nyiakeeper/shared/plans/ (exclude plan-review-*, pair-review-* and code-review-* files). Private wins if found in both.
@@ -168,7 +168,7 @@ Present findings in this structure:
 ## G) After Review
 
 1. **If PASS**: Tell the user the code is ready. Set the plan's `Status: Done` in its `plan.md` (the
-   `nyia todo` inventory regenerates from it — never hand-edit `todo.md`).
+   host regenerates the `todo.md` inventory from it after the session — never hand-edit `todo.md`).
 2. **If PASS WITH FIXES**: List the specific fixes needed. Offer to implement must-fix items (the plan
    stays `Active`/`Review` until they land).
 3. **If NEEDS WORK**: Explain what needs to change and why. Reference plan requirements. Set the plan's

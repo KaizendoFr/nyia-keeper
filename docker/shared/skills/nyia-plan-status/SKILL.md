@@ -1,5 +1,5 @@
 ---
-name: plan-status
+name: nyia-plan-status
 description: A normalized, filterable table of the project's plans — id, a concise purpose, and status — plus a single-plan drill-down. Use when someone asks "where are we regarding the plans?", "which plans are running / done / to-do?", "what's blocked?", or "status by roadmap / mvp / RC1". Read-only; it renders, it never changes a plan.
 ---
 
@@ -14,8 +14,10 @@ maintain it.)
 
 Status is owned by the generated inventory. Do NOT re-read or re-infer it plan-by-plan.
 
-1. **Status + id + slug**: run `nyia todo` — the deterministic, generated inventory (one line per plan,
-   worst-status first). This is the single source of truth for each plan's `Status:`.
+1. **Status + id + slug**: read `.nyiakeeper/todo.md` — the generated inventory (one line per plan,
+   worst-status first), written by the host at launch and after the session. If it is missing or older than
+   the plans, read each `plans/NNN-slug/plan.md` line-2 `Status:` instead (read-only; never write `todo.md`).
+   A plan with no `Status:` line counts as `Draft`. This is the single source of truth for each plan's `Status:`.
 2. **Roadmap label** (optional axis): each plan may carry an optional free-text `Roadmap:` line near the
    top (e.g. `Roadmap: mvp`). Read it directly from the plan — the first non-fenced `Roadmap:` line, the
    value up to any trailing ` #` comment. (The shipped `read_plan_roadmap` in `plan-resolution.sh` defines
@@ -35,15 +37,15 @@ every assistant, so it names no specific vendor model.)
 ## Invocation & filters
 
 ```
-/plan-status                 # default view (see Rendering)
-/plan-status running         # lifecycle filter → Active/Review/Blocked
-/plan-status done            # → Done
-/plan-status todo            # → Draft/Ready (not yet started)
-/plan-status blocked         # → Blocked
-/plan-status as mvp          # roadmap-label filter (any non-lifecycle token; `as` is optional)
-/plan-status mvp             #   same
-/plan-status running mvp     # combine: Active/Review/Blocked AND Roadmap: mvp
-/plan-status <N>             # single-plan drill-down (e.g. /plan-status 331)
+/nyia-plan-status                 # default view (see Rendering)
+/nyia-plan-status running         # lifecycle filter → Active/Review/Blocked
+/nyia-plan-status done            # → Done
+/nyia-plan-status todo            # → Draft/Ready (not yet started)
+/nyia-plan-status blocked         # → Blocked
+/nyia-plan-status as mvp          # roadmap-label filter (any non-lifecycle token; `as` is optional)
+/nyia-plan-status mvp             #   same
+/nyia-plan-status running mvp     # combine: Active/Review/Blocked AND Roadmap: mvp
+/nyia-plan-status <N>             # single-plan drill-down (e.g. /nyia-plan-status 331)
 ```
 
 Lifecycle tokens map onto the canonical enum `Draft Ready Active Blocked Review Done Dropped`
@@ -58,12 +60,12 @@ Columns: **id · purpose (concise) · status** (and a **roadmap** group when any
   `Dropped` to a count line (`Done: 12`) so the board shows what's live.
 - **Large store (≳15 live plans)**: lead with counts (by status, and by roadmap label), then list only
   the live rows (`Blocked`, `Active`, `Review`, then `Ready`); collapse the rest with a hint to expand
-  via a filter (e.g. "run `/plan-status done` for the 40 completed"). The ~15 threshold is a guideline,
+  via a filter (e.g. "run `/nyia-plan-status done` for the 40 completed"). The ~15 threshold is a guideline,
   not a hard rule — favor a view the user can scan.
 
-Order rows worst-status-first (`Blocked Active Review Ready Draft Done Dropped`), same as `nyia todo`.
+Order rows worst-status-first (`Blocked Active Review Ready Draft Done Dropped`), same as the generated inventory.
 
-## Single-plan drill-down (`/plan-status <N>`)
+## Single-plan drill-down (`/nyia-plan-status <N>`)
 
 - **Meta-plan** (has a `## Subplans` table): render that table normalized — each subplan's id, one-line
   purpose, and status.
@@ -74,9 +76,9 @@ Order rows worst-status-first (`Blocked Active Review Ready Draft Done Dropped`)
 ## Rules
 
 - **Read-only.** Never edit a plan, `plan.md`, `todo.md`, or any status/roadmap field. Rendering only.
-- **Reuse the tools.** Status from `nyia todo` (never re-derive → no enum drift); roadmap from
-  `read_plan_roadmap`. Only the concise purpose is LLM-generated.
-- **Handle both layouts.** New per-plan dirs and legacy flat plans both resolve — `nyia todo` and the
-  resolver already handle this.
+- **Reuse the files.** Status from the inventory or the `Status:` line verbatim (never re-derive from prose →
+  no enum drift); roadmap from the plan's `Roadmap:` line. Only the concise purpose is LLM-generated.
+- **Handle both layouts.** New per-plan dirs (`NNN-slug/plan.md`) and legacy flat plans (`NNN-slug.md`) both
+  count; review files (`plan-review-*`, `code-review-*`, `pair-review-*`) are not plans.
 - **Missing is normal.** No `Roadmap:` → Unlabeled; no explicit `Status:` → the inventory shows Draft.
   Never hide a plan for lacking a field.
