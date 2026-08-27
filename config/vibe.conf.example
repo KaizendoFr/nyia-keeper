@@ -7,13 +7,9 @@ ASSISTANT_CLI="vibe"
 # === DOCKER CONFIGURATION ===
 BASE_IMAGE_NAME="nyiakeeper-vibe"
 DOCKERFILE_PATH="docker/vibe"
-CONFIG_FILENAME="VIBE.md"
-DEFAULT_USER="node"
-BASE_DOCKER_IMAGE="debian:12-slim"
 
 # === DEV IMAGE SETTINGS ===
 ALLOW_DEV_IMAGES="true"
-FORCE_PRODUCTION="false"
 
 # === PROJECT CONTEXT ===
 CONTEXT_DIR_NAME=".nyiakeeper/vibe"

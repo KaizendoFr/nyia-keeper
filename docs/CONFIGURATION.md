@@ -34,7 +34,9 @@ nyia config global  [assistant] key=value   # write global scope
 4. Project **shared** — `.nyiakeeper/shared/config/nyia.conf` *(hand-edit only; committed downstream)*
 5. Global + assistant — `~/.config/nyiakeeper/config/<assistant>.conf`
 6. Global — `~/.config/nyiakeeper/config/nyia.conf` *(written by `nyia config global`)*
-7. Team — `$NYIA_TEAM_DIR/config/nyia.conf` *(hand-edit only, untrusted)*
+
+(The former team tier — `$NYIA_TEAM_DIR/config/` — was removed in Plan 328a: a team directory carries skills,
+personas and prompt overlays, never config values.)
 
 ## Editing config by hand
 
@@ -80,3 +82,43 @@ Some settings exist as a config key AND elsewhere, with a defined precedence:
 - `workspace_sync` (key) ← overridden by the `workspace.conf` `sync_branches` directive.
 - `rag_model` (key) ← a project `<assistant>.conf` `NYIA_RAG_MODEL` (precedence level 5) outranks
   `nyia config global rag_model` (level 6). This is the canonical two-source example.
+
+## What crosses into the container
+
+The launcher never forwards your shell environment wholesale. Exactly three channels carry values into the box
+(all resolved on the host by `create_docker_env_file` / `run_docker_container`):
+
+| Channel | Source | What passes | Rule |
+|---|---|---|---|
+| **Assistant settings allowlist** | the **global** `~/.config/nyiakeeper/config/<assistant>.conf` (profile-aware) | a short, per-assistant list of documented **non-secret** keys — today only OpenCode: `OLLAMA_AUTO_SETUP`, `ENABLE_OLLAMA`, `OLLAMA_FILTER_TOOLS` (`true`\|`false`), `OLLAMA_HOST` (`host[:port]`, no scheme), `OLLAMA_DEFAULT_MODEL` (model name) | conf only (a host-shell `export` of the same name never crosses); an invalid value is **dropped with a warning**, the launch continues with the in-box default; never read from a project tier — `OLLAMA_HOST` redirects model and RAG traffic, so a committed file must not set it (same rule as `auth_profile`) |
+| **Credentials** | `.nyiakeeper/private/creds/env` (literal-parsed, never sourced) + the five fixed names read from the global conf **or the host shell environment** (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`, `GOOGLE_CLOUD_PROJECT` — pre-existing behaviour) | names matching `*_API_KEY`, `*_TOKEN`, `*_KEY`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_APPLICATION_CREDENTIALS` | default-deny allowlist; `NYIA_*` / `OLLAMA_*` in `creds/env` are rejected with a warning |
+| **Launcher exports** | flags and resolved config | `NYIA_COMMAND_MODE`, `NYIA_RAG_MODEL`, `ENABLE_RAG`, `NYIA_RAG_VERBOSE` (`--rag-verbose`), `NYIA_DEBUG=true` (only when the host has it on), `NYIA_OPERATION_TYPE=auth` on `--login`, the workspace / egress / git-history markers | not user-settable except through their own flag or key |
+
+Notes:
+- `ENABLE_RAG="true"` in a global `<assistant>.conf` is honoured (the conf is sourced after the CLI defaults and
+  `parse_args` never resets it) — a supported way to make RAG the default for one assistant.
+- A `opencode.conf` generated before Plan 340 carried the example defaults `OLLAMA_HOST="localhost:11434"` and
+  `OLLAMA_DEFAULT_MODEL="llama3.2"` as active lines; the launcher comments those two exact lines out once (with a note) so
+  they do not turn into per-launch probes/warnings — uncomment them to enforce the values.
+- Anything else you put in `<assistant>.conf` stays on the host. If a documented key seems to do nothing in the
+  box, check this table first.
+
+## OpenCode configuration — the layers
+
+OpenCode merges its configuration natively; Nyia only adds files in slots OpenCode already reads. In the box,
+lowest to highest precedence:
+
+| # | File (in the box) | Owner | Notes |
+|---|---|---|---|
+| 1 | `~/.config/opencode/config.json` | **Nyia** — regenerated every launch (Ollama auto-setup) | never edit; `OLLAMA_AUTO_SETUP="false"` keeps it as it is |
+| 2 | `~/.config/opencode/opencode.json` (or `.jsonc`) | **you** — host path `~/.config/nyiakeeper/opencode/opencode.json` (`profiles/<p>/opencode/` when a profile is active) | your providers, models, `model` pin; Nyia never writes or prints it (OpenCode itself adds a `"$schema"` line on first load — that is the CLI, not Nyia) |
+| 3 | `$project/opencode.json` (or `.jsonc`) | **the repository** | Nyia only reads it (see the threat note below) |
+| 4 | `$project/.opencode/opencode.json` | **Nyia** — the `codebase-search` MCP entry when `--rag` is on, removed when off | gitignored with `.opencode/` |
+| 5 | `~/.opencode/opencode.json` — the *same* host file as layer 2, seen again through Nyia's second mount | you | so on a conflicting key **your file wins over the project file**; a repository can only *add* what you did not set (observed behaviour, not a contract Nyia's code relies on) |
+
+Practical notes:
+- Add a cloud / OpenAI-compatible provider in layer 2 (`"provider": {"acme": {"npm": "@ai-sdk/openai-compatible", "options": {"baseURL": "…", "apiKey": "{env:ACME_API_KEY}"}, "models": {…}}}`) and pin `"model": "acme/…"` there — otherwise the default flips to whatever Ollama model is detected first, and to nothing when Ollama is down.
+- **Key delivery**: only two paths persist across launches — a name matching `*_API_KEY` / `*_TOKEN` / `*_KEY` in `.nyiakeeper/private/creds/env` (then `{env:NAME}`), or a file dropped in the persisted dir (`{file:acme.key}`, relative to the config file). `/connect` writes `~/.local/share/opencode/auth.json`, which is **not** persisted by Nyia.
+- A LAN endpoint (`192.168.x.x`) is blocked under `network_egress_policy=restrict-local` unless listed in `network-allow.conf`; public endpoints are reachable.
+- A malformed layer-2/3 file stops OpenCode at startup with its own error — Nyia does not validate it.
+- **Threat note**: a repository's `opencode.json` runs with your keys inside the box: it can add `mcp` servers (local commands started with the CLI), `plugin`s, `permission` rules and providers with their own `baseURL`. Nyia runs a best-effort key-name scan and prints one warning when a project file appears to declare any of those (a determined repository can hide a key); the review is yours before launching a repository that is not yours (see [THREAT_MODEL.md](THREAT_MODEL.md)).

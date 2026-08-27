@@ -86,8 +86,6 @@ exclude_docs: |
   DEV_GUIDE_EGRESS.md
   DEV_GUIDE_FLAVORS_OVERLAYS.md
   RELEASE_OPS.md
-  opencode-technical-specs.md
-  opencode-configuration-files.md
   IMAGE_NAMING.md
   flavor-system.md
   requirements.txt

@@ -31,9 +31,10 @@ EOF2
     fi
     cat << EOF2
 
-Rules: an old name is deleted from Nyia's global skills directory; in assistant directories only a shipped copy
-(marker present, or identical to the global copy) is deleted — a user-authored one is kept and named. Team and
-project-shared skills are never touched. The same cleanup runs automatically on every install/upgrade.
+Rules: every directory under an old shipped name inside Nyia's own skill directories — the global one, each
+assistant's, each persona profile's — is deleted, whatever its content or marker (shipped skills are never edited in
+place; a CLI's own commands never live there). Skills under other names, symlinks, team and project-shared skills are
+never touched. The same cleanup runs automatically on every install/upgrade and at every launch.
 
 Arguments:
   config-dir    Nyia config root (default: \${NYIAKEEPER_HOME:-\$HOME/.config/nyiakeeper})

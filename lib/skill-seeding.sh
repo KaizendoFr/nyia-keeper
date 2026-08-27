@@ -78,71 +78,36 @@ seed_builtin_skills() {
 NYIA_SKILL_RENAMES="pair-review:nyia-plan-review do-a-plan:nyia-make-a-plan kickoff:nyia-kickoff checkpoint:nyia-checkpoint code-review:nyia-code-review implement-plan:nyia-implement-plan make-a-plan:nyia-make-a-plan overlay:nyia-overlay plan-review:nyia-plan-review plan-status:nyia-plan-status run-plans:nyia-run-plans share:nyia-share show-decisions:nyia-show-decisions whatsup:nyia-whatsup"
 
 # remove_stale_shipped_skills <nyia_home> [team_dir] [dry] [quiet]
-#   For every old shipped name: delete <home>/skills/<old> (Nyia's base dir, Nyia's name — unconditional), and in
-#   every known assistant dir (+ persona profiles) delete <old> ONLY when it is a shipped copy: it carries the
-#   .nyia-builtin marker, or it is byte-identical to the global <old> copy (captured before that one is deleted).
-#   Anything else is user-owned → kept and NAMED. Symlinks, the team dir and the project's shared skills are never
-#   touched (team_dir accepted for symmetry, never scanned). dry=1 prints "would remove" and changes nothing;
-#   quiet=1 (the launch path) prints only removals, never the "kept" lines. Always returns 0.
-#   First upgrade off a pre-marker install (338 security review): a global old copy WITHOUT the marker may have been
-#   edited in place (that was the supported customization before Plan 337) — it is MOVED to <home>/.removed-skills/
-#   <stamp>/ (outside skill discovery) with a WARNING naming the path, never rm -rf'd; and an assistant copy deleted
-#   because it is identical to that unmarked baseline is stashed there too. Marked copies are plainly deleted.
+#   For every old shipped name in NYIA_SKILL_RENAMES: delete <home>/skills/<old> (Nyia's global dir) and <old> in every
+#   known assistant dir and persona profile (<home>/<cli>/skills, <home>/profiles/*/<cli>/skills). Those directories
+#   are Nyia-managed and Nyia's shipped skills were never edited in place (user decision 2026-08-27, Plan 338): every
+#   copy under an old shipped name there is Nyia's — whatever its version, marker or content — so it is deleted
+#   outright and named. Nothing else is classified by content: a CLI's own commands (Claude Code's /code-review) are
+#   built into the CLI or live under its plugins dir, never as a dir under <cli>/skills. Skills under any OTHER name,
+#   symlinks, the team dir and the project's shared skills are never touched (team_dir accepted for call-site
+#   symmetry, never scanned). dry=1 prints "would remove" and changes nothing; quiet=1 (the launch path) is accepted
+#   for symmetry — removals are always printed, there is nothing else to report. Always returns 0.
 remove_stale_shipped_skills() {
-    local home="$1" team="${2:-}" dry="${3:-0}" quiet="${4:-0}" pair old new g a d cand tmp_old removed=0
+    local home="$1" team="${2:-}" dry="${3:-0}" quiet="${4:-0}" pair old new a d cand removed=0 verb="removed"
     [[ -n "$home" && -d "$home" ]] || return 0                       # never rm -rf with an empty/absent home
-    local verb="removed" stash="" stamp; stamp="$(date +%Y%m%d-%H%M%S)"
     [[ "$dry" == "1" ]] && verb="would remove"
-    local baseline_unmarked=0
     for pair in $NYIA_SKILL_RENAMES; do
         old="${pair%%:*}"; new="${pair#*:}"
         [[ "$old" == "$new" || -z "$old" ]] && continue
-        g="$home/skills/$old"; tmp_old=""; baseline_unmarked=0
-        if [[ -d "$g" && ! -L "$g" ]]; then
-            tmp_old="$(mktemp -d "${TMPDIR:-/tmp}/nyia-old.XXXXXX")" || tmp_old=""
-            [[ -n "$tmp_old" ]] && { cp -r "$g/." "$tmp_old/" 2>/dev/null || true; }
-            if [[ -f "$g/.nyia-builtin" ]]; then
-                [[ "$dry" == "1" ]] || rm -rf "$g"
-                printf '   %s old shipped skill: %s (now %s)\n' "$verb" "$g" "$new"
-            else
-                baseline_unmarked=1
-                if [[ "$dry" == "1" ]]; then
-                    printf '   would move old skill (unmarked — possibly edited in place): %s → %s/.removed-skills/%s/%s (now %s)\n' "$g" "$home" "$stamp" "$old" "$new"
-                else
-                    stash="$home/.removed-skills/$stamp"; mkdir -p "$stash" 2>/dev/null || stash=""
-                    if [[ -n "$stash" ]] && mv "$g" "$stash/$old" 2>/dev/null; then
-                        printf '   WARNING: old skill %s was never refreshed by Nyia and may carry your edits — moved to %s/%s (now %s)\n' "$g" "$stash" "$old" "$new"
-                    else
-                        rm -rf "$g"; printf '   %s old shipped skill: %s (now %s; stash unavailable)\n' "$verb" "$g" "$new"
-                    fi
-                fi
-            fi
-            removed=$((removed + 1))
+        case "$old" in */*|..|.) continue ;; esac                    # a rename entry is a name, never a path
+        cand="$home/skills/$old"
+        if [[ -d "$cand" && ! -L "$cand" ]]; then
+            [[ "$dry" == "1" ]] || rm -rf "$cand"
+            printf '   %s old shipped skill: %s (now %s)\n' "$verb" "$cand" "$new"; removed=$((removed + 1))
         fi
         for a in $NYIA_SEED_ASSISTANTS; do
             for d in "$home/$a/skills" "$home"/profiles/*/"$a"/skills; do
                 cand="$d/$old"
                 [[ -d "$cand" && ! -L "$cand" && ! -L "$d" ]] || continue
-                if [[ -f "$cand/.nyia-builtin" ]]; then
-                    [[ "$dry" == "1" ]] || rm -rf "$cand"
-                    printf '   %s old shipped copy: %s (now %s)\n' "$verb" "$cand" "$new"; removed=$((removed + 1))
-                elif [[ -n "$tmp_old" && -d "$tmp_old" ]] && _seed_same_tree "$cand" "$tmp_old"; then
-                    # identical to the global copy: a propagated clone. If that baseline was UNMARKED it may carry
-                    # edits → stash the clone next to it instead of deleting.
-                    if [[ "$dry" == "1" ]]; then
-                        printf '   %s old shipped copy: %s (now %s)\n' "$verb" "$cand" "$new"
-                    elif [[ "$baseline_unmarked" -eq 1 && -n "$stash" ]] && mkdir -p "$stash/$a" 2>/dev/null && mv "$cand" "$stash/$a/$old" 2>/dev/null; then
-                        printf '   moved old copy (identical to the unmarked global one): %s → %s/%s/%s\n' "$cand" "$stash" "$a" "$old"
-                    else
-                        rm -rf "$cand"; printf '   %s old shipped copy: %s (now %s)\n' "$verb" "$cand" "$new"
-                    fi
-                    removed=$((removed + 1))
-                elif [[ "$quiet" != "1" ]]; then
-                    printf '   kept (user-owned, old name %s): %s\n' "$old" "$cand"
-                fi
+                [[ "$dry" == "1" ]] || rm -rf "$cand"
+                printf '   %s old shipped copy: %s (now %s)\n' "$verb" "$cand" "$new"; removed=$((removed + 1))
             done
         done
-        [[ -n "$tmp_old" ]] && rm -rf "$tmp_old"
     done
     [[ "$removed" -gt 0 ]] && printf '   %s %s old-named shipped skill dir(s); the same skills are now nyia-*\n' "$verb" "$removed"
     return 0

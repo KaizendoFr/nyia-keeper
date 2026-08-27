@@ -7,13 +7,9 @@ ASSISTANT_CLI="codex"
 # === DOCKER CONFIGURATION ===
 BASE_IMAGE_NAME="nyiakeeper-codex"
 DOCKERFILE_PATH="docker/codex"
-CONFIG_FILENAME="CODEX.md"
-DEFAULT_USER="node"
-BASE_DOCKER_IMAGE="node:20-alpine"
 
 # === DEV IMAGE SETTINGS ===
 ALLOW_DEV_IMAGES="true"
-FORCE_PRODUCTION="false"
 
 # === PROJECT CONTEXT ===
 CONTEXT_DIR_NAME=".nyiakeeper/codex"

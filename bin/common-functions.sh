@@ -395,6 +395,22 @@ repair_config() {
     done
 }
 
+# comment_out_legacy_opencode_defaults <opencode.conf> — one-time, idempotent (Plan 340). Confs generated
+# before Plan 340 carry the EXAMPLE defaults `OLLAMA_HOST="localhost:11434"` and
+# `OLLAMA_DEFAULT_MODEL="llama3.2"` as ACTIVE lines. Now that these keys cross into the container they
+# would be probed / warned about on every launch for users who never chose them (localhost is not
+# reachable from a Docker Desktop box; llama3.2 is rarely installed). Only those two exact lines are
+# commented out, with a note; any other value is the user's choice and stays. Returns 0 iff it changed
+# the file.
+comment_out_legacy_opencode_defaults() {
+    local conf="$1"
+    [[ -f "$conf" && -w "$conf" ]] || return 1
+    grep -qE '^(OLLAMA_HOST="localhost:11434"|OLLAMA_DEFAULT_MODEL="llama3.2")[[:space:]]*(#.*)?$' "$conf" || return 1
+    sed -i -E 's|^(OLLAMA_HOST="localhost:11434"[[:space:]]*(#.*)?)$|# \1   # commented out by Nyia (Plan 340): empty = auto-detect; uncomment to enforce|; s|^(OLLAMA_DEFAULT_MODEL="llama3.2"[[:space:]]*(#.*)?)$|# \1   # commented out by Nyia (Plan 340): empty = first detected model; uncomment to enforce|' "$conf"
+    echo "ℹ️  $(basename "$conf"): the pre-installed OLLAMA_HOST / OLLAMA_DEFAULT_MODEL example defaults were commented out (they now reach the container — empty means auto-detect). Uncomment them to enforce those values." >&2
+    return 0
+}
+
 # Strip assistant fields a prior buggy repair_config wrongly appended to a NON-assistant config
 # (e.g. network-allow.conf) — those lines break the egress allowlist parser (proto host port). (Plan 300)
 _strip_assistant_pollution() {
@@ -462,6 +478,9 @@ generate_default_assistant_configs() {
             elif ! validate_config "$target_file"; then
                 # Repair existing broken config
                 repair_config "$target_file" "$example_file" "$base_name"
+                [[ "$base_name" == "opencode" ]] && comment_out_legacy_opencode_defaults "$target_file"
+            elif [[ "$base_name" == "opencode" ]] && comment_out_legacy_opencode_defaults "$target_file"; then
+                :   # a valid conf that carried the pre-340 example defaults, now commented (once)
             else
                 # Config exists and is valid - no action needed
                 if [[ "$VERBOSE" == "true" ]]; then
@@ -2775,6 +2794,58 @@ get_creds_env_args() {
 declare -a DOCKER_ENV_ARGS
 
 # Create temporary environment file for Docker container
+# ── Plan 340: documented, NON-SECRET <assistant>.conf settings that cross into the container ──────
+# ONE owner for "which conf settings reach the box". Values come from the resolved GLOBAL conf only
+# (never creds/env, never a project tier — project tiers are committable and OLLAMA_HOST redirects
+# model/RAG traffic; same rule as NYIA_AUTH_PROFILE). Secrets never belong here: they travel through
+# creds/env (is_allowed_creds_var) or the fixed key list inside create_docker_env_file.
+# get_assistant_settings_keys <assistant> — space-separated allowlist; empty for assistants with none.
+get_assistant_settings_keys() {
+    case "${1:-}" in
+        opencode) echo "OLLAMA_AUTO_SETUP ENABLE_OLLAMA OLLAMA_FILTER_TOOLS OLLAMA_HOST OLLAMA_DEFAULT_MODEL" ;;
+        *)        echo "" ;;
+    esac
+}
+
+# validate_assistant_setting <key> <value> — 0 iff the value has the shape the in-box consumer expects.
+#   booleans: true|false. OLLAMA_HOST: host[:port] — starts alphanumeric, ≤253 chars, no scheme, path,
+#   user or space (the hooks build http://host:port from it), port 1-65535. OLLAMA_DEFAULT_MODEL: 1-128 chars of [A-Za-z0-9._:/-].
+#   ASCII-only under LC_ALL=C (a UTF-8 collating locale over-matches [A-Za-z]). Unknown key → 1.
+validate_assistant_setting() {
+    local key="${1:-}" value="${2:-}" port
+    local LC_ALL=C
+    case "$key" in
+        OLLAMA_AUTO_SETUP|ENABLE_OLLAMA|OLLAMA_FILTER_TOOLS)
+            [[ "$value" =~ ^(true|false)$ ]] ;;
+        OLLAMA_HOST)
+            [[ "$value" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]{0,252})?(:[0-9]{1,5})?$ ]] || return 1
+            port="${value##*:}"
+            [[ "$port" == "$value" ]] && return 0                 # no port given → default applies in-box
+            (( 10#$port >= 1 && 10#$port <= 65535 )) ;;
+        OLLAMA_DEFAULT_MODEL)
+            [[ "$value" =~ ^[A-Za-z0-9._:/-]{1,128}$ ]] ;;
+        *)  return 1 ;;
+    esac
+}
+
+# append_validated_assistant_settings <scratch> <env_file> — the PARENT half of the settings path:
+#   the conf-sourcing child (a function-less bash whose stdout IS the env-file) wrote its non-empty
+#   candidates to <scratch>; validate each here, append the good ones, name the dropped ones on
+#   STDERR (this function's caller returns the env-file path on stdout). Always returns 0.
+append_validated_assistant_settings() {
+    local scratch="${1:-}" env_file="${2:-}" line key value
+    [[ -n "$scratch" && -f "$scratch" && -n "$env_file" ]] || return 0
+    while IFS= read -r -d '' line; do                                     # NUL-separated records
+        key="${line%%=*}"; value="${line#*=}"
+        if validate_assistant_setting "$key" "$value"; then
+            printf '%s=%s\n' "$key" "$value" >> "$env_file"
+        else
+            print_warning "Ignoring ${key} from the assistant config: value has an unexpected shape (see docs/CONFIGURATION.md)" >&2
+        fi
+    done < "$scratch"
+    return 0
+}
+
 create_docker_env_file() {
     local project_path="${1:-$(pwd)}"
     local assistant_name="${2:-}"
@@ -2806,7 +2877,7 @@ create_docker_env_file() {
     # $temp_script/$temp_sorted are declared later; unset expands to empty here (no set -u),
     # so the trap is safe throughout. Disarmed on the success path just before we echo the
     # name, so the caller keeps the file.
-    trap 'rm -f "$env_file" "$temp_script" "$temp_sorted" 2>/dev/null' EXIT
+    trap 'rm -f "$env_file" "$temp_script" "$temp_sorted" "$settings_scratch" "$auth_marker" 2>/dev/null' EXIT
 
     print_verbose "Creating Docker environment file (secure): $env_file"
     
@@ -2822,12 +2893,20 @@ create_docker_env_file() {
             print_deprecation ".nyiakeeper/creds/" ".nyiakeeper/private/creds/"
         fi
         print_verbose "Loading credentials from $creds_file"
-        # Extract just the VAR=value part from -e VAR=value arguments
-        while IFS= read -r env_arg; do
-            if [[ "$env_arg" =~ ^-e[[:space:]]+(.+)$ ]]; then
-                echo "${BASH_REMATCH[1]}" >> "$env_file"
-                print_verbose "Added credential: ${BASH_REMATCH[1]%%=*}"
+        # get_creds_env_args prints its argv one element per line: "-e" then "VAR=value" (Plan 310
+        # shape). Consume them as PAIRS — the previous single-line `-e VAR=value` regex matched
+        # nothing, so creds/env credentials silently never reached the container (found by Plan 340).
+        local _flag _kv
+        while IFS= read -r _flag; do
+            if [[ "$_flag" =~ ^-e[[:space:]]+(.+)$ ]]; then          # tolerate a one-line producer
+                _kv="${BASH_REMATCH[1]}"
+            elif [[ "$_flag" == "-e" ]] && IFS= read -r _kv; then
+                :
+            else
+                continue
             fi
+            echo "$_kv" >> "$env_file"
+            print_verbose "Added credential: ${_kv%%=*}"
         done < <(get_creds_env_args "$project_path")
     fi
     
@@ -2853,6 +2932,10 @@ create_docker_env_file() {
     local active_profile
     active_profile="$(resolve_active_profile)"
     if ! config_file="$(resolve_assistant_config_file "$nyia_home" "$conf_basename" "$active_profile")"; then
+        # Explicit shred: on `return` the function's locals are gone before the EXIT trap of the
+        # enclosing $(...) subshell fires, so the trap sees empty names and would orphan the file —
+        # which now carries creds/env credentials (Plan 340 code review, security).
+        rm -f "$env_file" 2>/dev/null
         return 1
     fi
     
@@ -2860,8 +2943,19 @@ create_docker_env_file() {
         print_verbose "Sourcing config file: $config_file"
         # Create temporary script to source config and export variables
         local temp_script=$(mktemp)
+        # Plan 340: the allowlisted NON-SECRET settings for this assistant. The child unsets them
+        # before sourcing (a host-shell `export OLLAMA_HOST=…` must never cross — conf only) and
+        # writes its non-empty candidates to a scratch file; the parent validates them below.
+        local settings_keys settings_scratch auth_marker
+        settings_keys="$(get_assistant_settings_keys "$assistant_name")"
+        settings_scratch=$(mktemp)          # 0600 (mktemp default): holds unvalidated candidates
+        auth_marker=$(mktemp)
         cat > "$temp_script" << 'EOF'
+# $1 = conf file, $2 = allowlisted setting names (space-separated), $3 = scratch file for them
+# (NUL-separated records), $4 = file receiving the effective AUTH_METHOD for the parent
+for var_name in $2; do unset "$var_name"; done
 source "$1"
+[[ -n "${4:-}" ]] && printf '%s' "${AUTH_METHOD:-}" > "$4"
 
 # Debug: Show AUTH_METHOD value
 if [[ "${VERBOSE:-}" == "true" ]] || [[ "${NYIA_DEBUG:-}" == "true" ]]; then
@@ -2890,9 +2984,28 @@ else
         echo "# DEBUG: NOT passing OPENAI_API_KEY (AUTH_METHOD='$AUTH_METHOD', key exists: ${OPENAI_API_KEY:+yes})" >&2
     fi
 fi
+
+# Plan 340: non-secret settings → scratch file (NOT stdout: stdout is the env-file). Validation
+# happens in the parent, which owns the functions and the stderr channel.
+if [[ -n "${3:-}" ]]; then
+    for var_name in $2; do
+        if [[ -n "${!var_name:-}" ]]; then
+            printf '%s=%s\0' "$var_name" "${!var_name}" >> "$3"      # NUL: a value may contain a newline
+        fi
+    done
+fi
 EOF
-        bash "$temp_script" "$config_file" >> "$env_file"
+        bash "$temp_script" "$config_file" "$settings_keys" "$settings_scratch" "$auth_marker" >> "$env_file"
         rm -f "$temp_script"
+        append_validated_assistant_settings "$settings_scratch" "$env_file"
+        rm -f "$settings_scratch"
+        # The chatgpt_signin gate applies to EVERY channel: a creds/env OPENAI_API_KEY must not reach a
+        # Codex box that signs in with a ChatGPT subscription (billing would silently switch to the API).
+        if [[ "$(cat "$auth_marker" 2>/dev/null)" == "chatgpt_signin" ]]; then
+            sed -i '/^OPENAI_API_KEY=/d' "$env_file"
+            print_verbose "Withheld OPENAI_API_KEY (AUTH_METHOD=chatgpt_signin)"
+        fi
+        rm -f "$auth_marker"
     else
         print_verbose "Config file not found: $config_file"
     fi
@@ -3476,13 +3589,16 @@ run_debug_shell() {
     docker_env_args+=(-e NYIA_CONTEXT_DIR="${config_dir_name}")
     docker_env_args+=(-e NYIA_ASSISTANT_CLI="${assistant_cli}")
     docker_env_args+=(-e NYIA_PROVIDER="${assistant_cli}")
-    docker_env_args+=(-e NYIA_ENABLE_PROMPT_LAYERING="${NYIA_ENABLE_PROMPT_LAYERING:-true}")
-    docker_env_args+=(-e NYIA_ENABLE_SESSION_PERSISTENCE="${NYIA_ENABLE_SESSION_PERSISTENCE:-true}")
     docker_env_args+=(-e NYIA_PROJECT_PATH="$container_path")
 
     # Terminal color support — pass host values with safe defaults
     docker_env_args+=(-e TERM="${TERM:-xterm-256color}")
     docker_env_args+=(-e COLORTERM="${COLORTERM:-truecolor}")
+
+    # Plan 340: same NYIA_DEBUG forward as run_docker_container (only when on)
+    if [[ "${NYIA_DEBUG:-false}" == "true" ]]; then
+        docker_env_args+=(-e NYIA_DEBUG=true)
+    fi
 
     # Pass workspace mode to container (for RAG disable, exclusions status)
     if [[ "$WORKSPACE_MODE" == "true" ]]; then
@@ -3733,10 +3849,7 @@ run_docker_container() {
     docker_env_args+=(-e NYIA_CONTEXT_DIR="${context_dir_name}")
     docker_env_args+=(-e NYIA_ASSISTANT_CLI="${assistant_cli}")
     docker_env_args+=(-e NYIA_PROVIDER="${assistant_cli}")
-    docker_env_args+=(-e NYIA_ENABLE_PROMPT_LAYERING="${NYIA_ENABLE_PROMPT_LAYERING:-true}")
-    docker_env_args+=(-e NYIA_ENABLE_SESSION_PERSISTENCE="${NYIA_ENABLE_SESSION_PERSISTENCE:-true}")
     docker_env_args+=(-e NYIA_PROJECT_PATH="$container_path")
-    docker_env_args+=(-e NYIA_BUILD_TIMESTAMP="$(date -Iseconds)")
 
     # Host<->container version/channel compatibility guard (Plan 270).
     # Pass the installed host version/channel so the entrypoint can compare them
@@ -3889,6 +4002,12 @@ run_docker_container() {
     fi
     if [[ -n "${NYIA_RAG_MODEL:-}" ]]; then
         docker_env_args+=(-e NYIA_RAG_MODEL="${NYIA_RAG_MODEL}")
+    fi
+
+    # Plan 340: NYIA_DEBUG is a launcher flag, not a conf setting — forward it only when ON (the host
+    # always exports it, default false, bin/common/shared.sh) so the box's debug_log gate can open.
+    if [[ "${NYIA_DEBUG:-false}" == "true" ]]; then
+        docker_env_args+=(-e NYIA_DEBUG=true)
     fi
 
     # Pass workspace mode to container (for RAG disable, exclusions status)
@@ -4341,9 +4460,10 @@ login_assistant() {
         -e NYIA_CONTEXT_DIR="$config_dir_name"
     )
 
-    if [[ "$assistant_cli" == "gemini" ]]; then
-        docker_opts+=(-e NYIA_OPERATION_TYPE=auth)
-    fi
+    # NYIA_OPERATION_TYPE=auth: the hooks run inside the login container too. Gemini (Plan 275)
+    # skips project work under it; Plan 340 makes it universal so opencode skips Ollama auto-setup
+    # (which would otherwise regenerate the persisted config.json during a mere --login).
+    docker_opts+=(-e NYIA_OPERATION_TYPE=auth)
 
     if [[ "$auth_method" == "chatgpt_signin" ]]; then
         if ! uses_docker_desktop; then

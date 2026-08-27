@@ -135,7 +135,7 @@ if [[ "$RELEASE_TYPE" == channel:* ]]; then
         echo "❌ Could not resolve channel '$CHANNEL_NAME' from manifest"
         echo "   Manifest URL: $CHANNELS_MANIFEST_URL"
         echo "   Falling back to newest published release..."
-        RELEASE_TYPE="tags/v0.1.0-beta.7"
+        RELEASE_TYPE="tags/v0.1.0-beta.8"
     else
         echo "📦 Channel '$CHANNEL_NAME' resolved to: $TAG_NAME"
     fi

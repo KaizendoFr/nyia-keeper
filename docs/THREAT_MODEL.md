@@ -30,6 +30,13 @@ layer on top. See [How Nyia compares](COMPARISON.md).
   [restrict-local](NETWORK_EGRESS.md) (Linux) when that matters.
 - **Exclusions are patterns, not magic.** They can't know a custom-named secret is sensitive — you
   extend the list.
+- **The assistant's own project config is repository content.** OpenCode reads `opencode.json` from
+  the project (Claude, Codex, Gemini and Vibe have equivalents): a repository can add MCP servers
+  (local commands started with the CLI), plugins, permission rules and providers pointing at its own
+  `baseURL` — with your keys, inside the box, and with ordinary egress. Nyia never writes those files,
+  refuses to write through a repository-planted link in the project, and runs a best-effort key-name scan
+  that warns once (a determined repository can hide a key); the review is yours (see
+  [CONFIGURATION.md](CONFIGURATION.md#opencode-configuration--the-layers)).
 - **Not independently audited.** It's a solo, beta-quality project — use at your own risk.
 
 ## Shared team content: a structural shield, not content review

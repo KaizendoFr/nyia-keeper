@@ -76,10 +76,7 @@ be replaced. To customize a built-in **under its own name**, use a team source o
 replaced); to change the image itself, use an overlay ([TEAM_SHARING.md](TEAM_SHARING.md)). A skill you write
 under **another name** in your global skills directory is never touched. Inside the box, the image's copy of a
 built-in replaces the host-propagated copy only when the image is at least as new — rebuild the image
-(`nyia-<assistant> --build`) to refresh skills in the session after a dist-only upgrade.
-
-## 6. Layout and migration
-
-The per-plan directory layout (`plans/NNN-slug/plan.md`, `decisions.md`, `reviews/`) is created by
-`nyia plans migrate` (host, one-time, full backup first). A project that starts on the new layout needs no
-migration and no marker — the host regenerates `todo.md` for any store that is not on the legacy flat layout.
+(`nyia-<assistant> --build`) to refresh skills in the session after a dist-only upgrade. When a shipped skill is
+**renamed** (the `nyia-` prefix, Plan 338), every directory under the old name inside Nyia's skill directories — global,
+per-assistant, persona profiles — is deleted on upgrade and again at every launch, whatever its content or marker: those
+directories only ever receive Nyia's copies, and a CLI's own commands never live there.

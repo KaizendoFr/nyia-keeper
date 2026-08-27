@@ -8,13 +8,9 @@ ASSISTANT_CLI="gemini"
 # === DOCKER CONFIGURATION ===
 BASE_IMAGE_NAME="nyiakeeper-gemini"  # Base name without tag
 DOCKERFILE_PATH="docker/gemini"
-CONFIG_FILENAME="GEMINI.md"
-DEFAULT_USER="node"
-BASE_DOCKER_IMAGE="node:22-alpine"
 
 # === DEV IMAGE SETTINGS ===
 ALLOW_DEV_IMAGES="true"
-FORCE_PRODUCTION="false"
 
 # === PROJECT CONTEXT ===
 CONTEXT_DIR_NAME=".nyiakeeper/gemini"

@@ -59,7 +59,13 @@ firewall. So restrict-local first moves the container off host networking into i
 
 `detect_ollama_host()` resolves `host.docker.internal` first (provided via
 host-gateway), then `172.17.0.1`, so ollama-backed RAG continues to work on the
-bridge. Web egress (e.g. `curl https://example.com`) also still works — only the
+bridge. A preset `OLLAMA_HOST` (`host[:port]` in the global `opencode.conf`, Plan 340) is
+probed *before* auto-detection: under `restrict-local` the ollama exception covers
+**`host-gateway:11434` only, and only when RAG is on** — a LAN address (`192.168.x.x`) is
+dropped unless you add it to `network-allow.conf`, while a **public** Ollama URL is
+reachable by design (public egress is allowed). When the preset is unreachable the
+launcher says so and falls back to auto-detection; when it is reachable but lacks the
+embedding model, RAG fails fast as usual (never a silent switch to another host). Web egress (e.g. `curl https://example.com`) also still works — only the
 local network is the target of restriction.
 
 ## ⚠️ Limitation (Phase A alone)
