@@ -368,6 +368,12 @@ fetch_latest_version() {
 # job's RETAIN_PER_FAMILY and docs/RELEASE_OPS.md.
 NYIA_RETAIN_PER_FAMILY="${NYIA_RETAIN_PER_FAMILY:-4}"
 
+# The FIRST release whose images carry per-version :v<version> tags (Plan 344). Anything older than
+# this never had pinned tags at all, so "no pinned tag" there means "predates pinning", NOT "pruned".
+# Without this the installer refuses versions that `nyia update list` still offers — the two
+# contradict each other, and the refusal is simply false (verified on the VM against beta.8).
+NYIA_PINNING_EPOCH="${NYIA_PINNING_EPOCH:-v0.1.0-beta.9}"
+
 # _version_family <tag> -> alpha | beta | stable | unknown
 _version_family() {
     case "$1" in
@@ -531,6 +537,12 @@ cli_targeted_update() {
                 else
                     _pinning_in_use=$?
                 fi
+            fi
+            # A target OLDER than the pinning epoch predates per-version tags entirely: its missing
+            # pinned tag says nothing about whether its images are still there. Refusing it would
+            # contradict `nyia update list`, which still lists it as installable.
+            if compare_versions "$target_tag" "$NYIA_PINNING_EPOCH"; then
+                _pinning_in_use=2
             fi
             if [[ "$_pinning_in_use" -eq 0 ]]; then
                 echo "" >&2
