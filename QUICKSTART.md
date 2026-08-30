@@ -99,6 +99,9 @@ See [docs/BRANCH_MANAGEMENT.md](docs/BRANCH_MANAGEMENT.md) for detailed workflow
 All assistants include 12 built-in skills (following the [Agent Skills](https://agentskills.io) standard), all
 prefixed **`nyia-`** — type `/nyia-` to list them. Any other slash command is the assistant CLI's own or yours.
 
+> **Autocomplete tip** — in Claude Code, a `/` at the *start* of a line matches fuzzily (`/ck` finds `nyia-checkpoint`),
+> but a `/` typed *mid-line* matches by prefix only: type `/nyia-` and the list appears. That is the CLI's palette, not Nyia.
+
 | Skill | Command | Purpose |
 |-------|---------|---------|
 | **nyia-kickoff** | `/nyia-kickoff` | Start a session — reconstructs state from `.nyiakeeper/` and proposes the next steps |

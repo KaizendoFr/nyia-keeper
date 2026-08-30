@@ -53,3 +53,24 @@ Desktop / WSL2 it refuses with a clear message. Set `network_egress_policy=off` 
 ## Still stuck?
 
 Open an issue on the [GitHub repository](https://github.com/KaizendoFr/nyia-keeper).
+
+## "The channel was rolled back to …"
+
+A release was withdrawn and the channel now points at the previous version. Your container images
+follow automatically on the next launch (the launcher re-pulls the channel tag). Accept the prompt,
+or run `nyia update install <version>`, to bring your host side in line. Nothing is broken — you are
+being moved back to the last good release.
+
+## "That version's images are no longer published"
+
+`nyia update install <old-version>` refuses versions whose images were pruned: only your channel's
+current version plus the newest 4 of that channel are kept (plus every stable one). Run
+`nyia update list` to see what is installable. The refusal needs per-version image tags, which
+releases from v0.1.0-beta.10 onwards carry; for anything older the check cannot tell and the
+install proceeds with a warning. If you need an exact old version, pin the image tag instead:
+`NYIA_IMAGE_TAG=v0.1.0-beta.7 nyia-claude` — that only works while that pinned tag still exists.
+
+## `--list-images` says "No images found" but the assistant runs
+
+Fixed in Plan 344: the listing only matched locally built images (`nyiakeeper/<name>`), never the
+published ones (`ghcr.io/kaizendofr/nyiakeeper-<name>`). Update to a build that includes the fix.

@@ -361,18 +361,36 @@ fetch_latest_version() {
 
 # --- Version Listing ---
 
+# Plan 344: what a user can actually install is bounded by IMAGE RETENTION, not by the release
+# list: the pipeline keeps the newest NYIA_RETAIN_PER_FAMILY pinned image versions per prerelease
+# family (plus every stable), so older releases still have assets but no runnable image. Listing
+# them would offer versions that cannot launch. Keep this constant in step with the retain-images
+# job's RETAIN_PER_FAMILY and docs/RELEASE_OPS.md.
+NYIA_RETAIN_PER_FAMILY="${NYIA_RETAIN_PER_FAMILY:-4}"
+
+# _version_family <tag> -> alpha | beta | stable | unknown
+_version_family() {
+    case "$1" in
+        *-alpha.*) echo "alpha" ;;
+        *-beta.*)  echo "beta" ;;
+        v*.*.*)    [[ "$1" == *-* ]] && echo "unknown" || echo "stable" ;;
+        *)         echo "unknown" ;;
+    esac
+}
+
 list_available_versions() {
     local response
+    # per_page 40 (was 10): with 4+ retained betas the stable release must stay reachable behind
+    # them — a 10-release window drops it as soon as ten prereleases are cut (Plan 344).
     response=$(curl -s --max-time "$UPDATE_CURL_TIMEOUT" \
         -H "Accept: application/vnd.github.v3+json" \
-        "${GITHUB_API}/releases?per_page=10" 2>/dev/null) || response=""
+        "${GITHUB_API}/releases?per_page=40" 2>/dev/null) || response=""
 
     if [[ -z "$response" ]]; then
         echo "Error: Could not fetch releases from GitHub." >&2
         return 1
     fi
 
-    # Extract all tag_name values
     local -a tags=()
     while IFS= read -r t; do
         tags+=("$t")
@@ -383,47 +401,95 @@ list_available_versions() {
         return 1
     fi
 
-    # Extract published_at dates
     local -a dates=()
     while IFS= read -r d; do
-        dates+=("${d:0:10}")  # keep YYYY-MM-DD only
+        dates+=("${d:0:10}")
     done < <(echo "$response" | grep -o '"published_at"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"published_at"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
 
-    # Get current installed version for marker
     local current
     current=$(get_installed_version 2>/dev/null) || current=""
 
-    echo "Available versions (last ${#tags[@]}):"
-    echo ""
+    # The channel pointers (what an automatic update would install per channel).
+    local pointers="" ch_ptr
+    for ch in "$CHANNEL_LATEST" "$CHANNEL_BETA" "$CHANNEL_ALPHA"; do
+        ch_ptr=$(fetch_channel_version "$ch" 2>/dev/null) || ch_ptr=""
+        [[ -n "$ch_ptr" ]] && pointers="${pointers}${ch}=${ch_ptr} "
+    done
 
-    # If date count matches tag count, show dates; otherwise tag-only
-    if [[ ${#dates[@]} -eq ${#tags[@]} ]]; then
+    echo "Installable versions (each channel's current version + the newest ${NYIA_RETAIN_PER_FAMILY} of that channel, plus every stable release):"
+    echo ""
+    [[ -n "$pointers" ]] && { echo "  Channel pointers: ${pointers% }"; echo ""; }
+
+    local have_dates=0
+    [[ ${#dates[@]} -eq ${#tags[@]} ]] && have_dates=1
+    if [[ "$have_dates" -eq 1 ]]; then
         printf "  %-28s %-14s %s\n" "TAG" "DATE" "STATUS"
-        for i in "${!tags[@]}"; do
-            local marker=""
-            if [[ "${tags[$i]}" == "$current" ]]; then
-                marker="← installed"
-            fi
-            case "${tags[$i]}" in *-alpha.*) marker="${marker:+$marker }(deprecated)" ;; esac   # Plan 321 R3
-            printf "  %-28s %-14s %s\n" "${tags[$i]}" "${dates[$i]}" "$marker"
-        done
     else
         printf "  %-28s %s\n" "TAG" "STATUS"
-        for i in "${!tags[@]}"; do
-            local marker=""
-            if [[ "${tags[$i]}" == "$current" ]]; then
-                marker="← installed"
-            fi
-            case "${tags[$i]}" in *-alpha.*) marker="${marker:+$marker }(deprecated)" ;; esac   # Plan 321 R3
-            printf "  %-28s %s\n" "${tags[$i]}" "$marker"
-        done
     fi
 
+    local -A shown=()
+    local i tag family marker n hidden=0 p is_pointer
+    for i in "${!tags[@]}"; do
+        tag="${tags[$i]}"
+        family=$(_version_family "$tag")
+        # The channel pointer's digest is PROTECTED by retention (it carries the floating alias),
+        # so it never consumes one of the N slots — retention keeps "pointer + N", and the list must
+        # show the same set or it would hide a version that is still installable. (Code review SF6.)
+        is_pointer=0
+        for p in $pointers; do [[ "$tag" == "${p#*=}" ]] && is_pointer=1; done
+        if [[ "$family" != "stable" && "$is_pointer" -eq 0 ]]; then
+            n=${shown[$family]:-0}
+            if (( n >= NYIA_RETAIN_PER_FAMILY )); then
+                hidden=$((hidden + 1))
+                continue                      # its images are pruned — offering it would be a lie
+            fi
+            shown[$family]=$((n + 1))
+        fi
+        marker=""
+        [[ "$tag" == "$current" ]] && marker="← installed"
+        for p in $pointers; do
+            [[ "$tag" == "${p#*=}" ]] && marker="${marker:+$marker }(${p%%=*} channel)"
+        done
+        case "$tag" in *-alpha.*) marker="${marker:+$marker }(deprecated)" ;; esac   # Plan 321 R3
+        if [[ "$have_dates" -eq 1 ]]; then
+            printf "  %-28s %-14s %s\n" "$tag" "${dates[$i]}" "$marker"
+        else
+            printf "  %-28s %s\n" "$tag" "$marker"
+        fi
+    done
+
     echo ""
+    if [[ "$hidden" -gt 0 ]]; then
+        echo "  ($hidden older release(s) hidden — their images are no longer published, so they cannot be installed.)"
+        echo ""
+    fi
     echo "To switch: nyia update install <version>"
 }
 
 # --- CLI-targeted Update Wrapper ---
+
+# nyia_pinned_image_exists <version-tag> [package]
+#   0 = the pinned image for this version is published · 1 = it is not · 2 = could not tell.
+# Anonymous GHCR read on a PUBLIC package: token exchange, then HEAD the manifest. The Accept
+# header must list the index media types or a multi-arch manifest answers 404/406 (Plan 344).
+nyia_pinned_image_exists() {
+    local version="${1:?version}" pkg="${2:-nyiakeeper-base}" token code
+    command -v curl >/dev/null 2>&1 || return 2
+    token=$(curl -s --max-time "${UPDATE_CURL_TIMEOUT:-10}" \
+        "https://ghcr.io/token?scope=repository:kaizendofr/${pkg}:pull&service=ghcr.io" 2>/dev/null \
+        | sed 's/.*"token":"\([^"]*\)".*/\1/') || return 2
+    [[ -n "$token" && "$token" != *'{'* ]] || return 2
+    code=$(curl -sI -o /dev/null -w '%{http_code}' --max-time "${UPDATE_CURL_TIMEOUT:-10}" \
+        -H "Authorization: Bearer ${token}" \
+        -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json' \
+        "https://ghcr.io/v2/kaizendofr/${pkg}/manifests/${version}" 2>/dev/null) || return 2
+    case "$code" in
+        200) return 0 ;;
+        404) return 1 ;;
+        *)   return 2 ;;   # 401/5xx/timeout: unverifiable — never claim the image is missing
+    esac
+}
 
 cli_targeted_update() {
     local target_tag="${1:-}"
@@ -447,6 +513,34 @@ cli_targeted_update() {
 
         echo "Current version: ${current:-unknown}"
         echo "Target version:  $target_tag ($direction)"
+
+        # Plan 344: only RETAINED versions still have container images, so installing a pruned
+        # version yields a host that cannot launch. Two guards keep this honest:
+        #   * a 404 for the target is only meaningful once pinned tags are actually in use — every
+        #     release cut BEFORE Plan 344 has none, and refusing those would block every install
+        #     that works today. So first confirm the current channel pointer HAS a pinned image;
+        #   * only a DEFINITIVE 404 refuses. Offline, 401 or 5xx (rc 2) never blocks the user.
+        local _probe_rc=0
+        nyia_pinned_image_exists "$target_tag" || _probe_rc=$?
+        if [[ "$_probe_rc" -eq 1 ]]; then
+            local _channel_ref _pinning_in_use=2      # 0 = pinning IS in use, anything else = unknown
+            _channel_ref=$(fetch_channel_version "$(get_installed_channel 2>/dev/null || echo "$CHANNEL_BETA")" 2>/dev/null) || _channel_ref=""
+            if [[ -n "$_channel_ref" ]]; then
+                if nyia_pinned_image_exists "$_channel_ref"; then
+                    _pinning_in_use=0
+                else
+                    _pinning_in_use=$?
+                fi
+            fi
+            if [[ "$_pinning_in_use" -eq 0 ]]; then
+                echo "" >&2
+                echo "❌ ${target_tag} is no longer installable: its container images have been removed." >&2
+                echo "   Only the newest few releases per channel are kept (plus every stable release)." >&2
+                echo "   Run 'nyia update list' to see what is installable." >&2
+                return 1
+            fi
+            # Pinned tags are not in use yet (pre-Plan-344 releases): say nothing, install as before.
+        fi
         echo ""
 
         local answer
@@ -1150,6 +1244,55 @@ _maybe_show_layout_change_notice() {
     return 0
 }
 
+# _maybe_offer_channel_rollback <installed> <pointer> <channel>
+#   0 = this WAS a rollback and it has been handled (caller should stop)
+#   1 = not a rollback (the pointer is newer or equal) — carry on with the normal update path
+#
+# Before Plan 344 a backward pointer produced pure SILENCE: compare_versions returns non-zero and
+# the update block was simply skipped, so a user on a withdrawn version was never told — while
+# their IMAGES rolled back on the next launch (the launcher re-pulls the floating channel tag),
+# leaving dist and image skewed. A decline is remembered durably: the check runs hourly, so a
+# timestamp alone would re-ask forever.
+_maybe_offer_channel_rollback() {
+    local current="$1" pointer="$2" channel="$3"
+    [[ -n "$current" && -n "$pointer" ]] || return 1
+    [[ "$current" != "$pointer" ]] || return 1
+    compare_versions "$current" "$pointer" && return 1      # pointer is NEWER: normal update path
+
+    local _home="${NYIAKEEPER_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/nyiakeeper}"
+    mkdir -p "$_home" 2>/dev/null || true
+    local marker="${_home}/.rollback-declined"
+    local declined=""
+    [[ -f "$marker" ]] && declined="$(tr -d '[:space:]' < "$marker" 2>/dev/null)"
+    if [[ "$declined" == "$pointer" ]]; then
+        return 0                                            # already declined THIS rollback: stay quiet
+    fi
+
+    echo "" >&2
+    echo "⚠️  The '${channel}' channel was rolled back to ${pointer}" >&2
+    echo "   (you have ${current} installed — its images are no longer published)." >&2
+    if [[ -t 0 ]]; then
+        local answer=""
+        printf "   Install %s now? [y/N]: " "$pointer" >&2
+        read -r answer || answer=""
+        if [[ "$answer" =~ ^[Yy]$ ]]; then
+            _write_update_cache "$pointer" "$current"
+            perform_update "$pointer" "$channel"
+            return 0
+        fi
+        if ! printf '%s\n' "$pointer" > "$marker" 2>/dev/null; then
+            # Cannot remember the decline (read-only home): fall back to the check timestamp so the
+            # user is not re-prompted on every single launch.
+            _write_check_timestamp 2>/dev/null || true
+        fi
+        _write_check_timestamp 2>/dev/null || true   # also throttle the network check itself
+        echo "   Skipped. Install it later with:  nyia update install ${pointer}" >&2
+        return 0
+    fi
+    echo "   Install it with:  nyia update install ${pointer}" >&2
+    return 0
+}
+
 check_for_updates_if_due() {
     # Guard: VERSION file must exist — resolve config dir without side effects
     local _config_root="${XDG_CONFIG_HOME:-$HOME/.config}/nyiakeeper"
@@ -1205,6 +1348,14 @@ check_for_updates_if_due() {
             echo "No stable release available yet on the 'latest' channel." >&2
             echo "  Switch to the beta channel with:  nyia update install beta" >&2
         fi
+        release_update_lock
+        return 0
+    fi
+
+    # Plan 344: the channel pointer can also move BACKWARD (a maintainer rolled a bad release back).
+    # Handled by _maybe_offer_channel_rollback so it is testable on its own — the enclosing function
+    # is TTY-gated and cannot be exercised headlessly.
+    if _maybe_offer_channel_rollback "$current_version" "$latest_version" "$installed_channel"; then
         release_update_lock
         return 0
     fi

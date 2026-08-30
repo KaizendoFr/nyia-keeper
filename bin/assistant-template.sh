@@ -467,9 +467,10 @@ show_assistant_status() {
     # Show available images (convert dash-form config name to slash-form)
     local _clean="${BASE_IMAGE_NAME#nyiakeeper-}"
     local _search="nyiakeeper/${_clean}"
+    local _registry_search="ghcr.io/*/nyiakeeper-${_clean}"   # Plan 344: runtime users run registry images
     echo "  Available images:"
-    if command -v docker >/dev/null && docker images --filter "reference=${_search}*" --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}" 2>/dev/null | tail -n +2 | grep -q . 2>/dev/null; then
-        docker images --filter "reference=${_search}*" --format "    {{.Repository}}:{{.Tag}} ({{.Size}}, {{.CreatedAt}})" 2>/dev/null
+    if command -v docker >/dev/null && docker images --filter "reference=${_search}*" --filter "reference=${_registry_search}*" --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}" 2>/dev/null | tail -n +2 | grep -q . 2>/dev/null; then
+        docker images --filter "reference=${_search}*" --filter "reference=${_registry_search}*" --format "    {{.Repository}}:{{.Tag}} ({{.Size}}, {{.CreatedAt}})" 2>/dev/null
     else
         echo "    No images found - run nyia-${config_assistant_name} --build-custom-image to create custom overlay"
     fi

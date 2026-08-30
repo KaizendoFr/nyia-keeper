@@ -3959,7 +3959,11 @@ run_docker_container() {
 
         # End-user pull: fetch the published variant BEFORE the presence check (the
         # generic pull later in this function runs too late). Registry images only.
-        if [[ "$_egress_image" == ghcr.io/* ]] && ! docker image inspect "$_egress_image" >/dev/null 2>&1; then
+        # Plan 344: pull UNCONDITIONALLY (not only when the image is absent locally). The floating
+        # channel alias moves when a channel is promoted OR rolled back, and a user who already had
+        # :beta-egress would otherwise keep the withdrawn image forever — the normal image path
+        # already re-pulls on every launch, so egress must behave the same.
+        if [[ "$_egress_image" == ghcr.io/* ]]; then
             print_status "Pulling egress-hardened image: $_egress_image"
             docker pull "$_egress_image" >/dev/null 2>&1 || true
         fi
@@ -4702,11 +4706,14 @@ list_assistant_images() {
     # Strip nyiakeeper- prefix to match actual image names
     local clean_name="${base_image_name#nyiakeeper-}"
     local search_pattern="nyiakeeper/${clean_name}"
+    # Plan 344: runtime users run REGISTRY images (ghcr.io/kaizendofr/nyiakeeper-<name>:<channel>),
+    # which the local slash-form pattern never matches — they always saw "No images found".
+    local registry_pattern="ghcr.io/*/nyiakeeper-${clean_name}"
 
     print_status "Available images for ${clean_name}:"
 
-    if command -v docker >/dev/null && docker images --filter "reference=${search_pattern}*" --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}" 2>/dev/null | tail -n +2 | grep -q . 2>/dev/null; then
-        docker images --filter "reference=${search_pattern}*" --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}"
+    if command -v docker >/dev/null && docker images --filter "reference=${search_pattern}*" --filter "reference=${registry_pattern}*" --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}" 2>/dev/null | tail -n +2 | grep -q . 2>/dev/null; then
+        docker images --filter "reference=${search_pattern}*" --filter "reference=${registry_pattern}*" --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}"
     else
         print_info "No images found for ${clean_name}"
         print_info "Build images with:"
@@ -4953,9 +4960,10 @@ run_assistant() {
         # Show available images for reference (convert dash-form config name to slash-form)
         local _clean="${base_image_name#nyiakeeper-}"
         local _search="nyiakeeper/${_clean}"
+        local _registry_search="ghcr.io/*/nyiakeeper-${_clean}"   # Plan 344: registry form too
         print_info "Available images:"
-        if docker images --filter "reference=${_search}*" --format "  {{.Repository}}:{{.Tag}}" 2>/dev/null | head -10 | grep -q .; then
-            docker images --filter "reference=${_search}*" --format "  {{.Repository}}:{{.Tag}}" 2>/dev/null | head -10
+        if docker images --filter "reference=${_search}*" --filter "reference=${_registry_search}*" --format "  {{.Repository}}:{{.Tag}}" 2>/dev/null | head -10 | grep -q .; then
+            docker images --filter "reference=${_search}*" --filter "reference=${_registry_search}*" --format "  {{.Repository}}:{{.Tag}}" 2>/dev/null | head -10
         else
             print_info "  No images found for ${_clean}"
         fi

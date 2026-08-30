@@ -499,3 +499,19 @@ Setup instructions are printed to stderr only when the terminal is interactive, 
 
 - [BRANCH_MANAGEMENT.md](BRANCH_MANAGEMENT.md) - Detailed branch workflow guide
 - [USER_GUIDE_FLAVORS_OVERLAYS.md](USER_GUIDE_FLAVORS_OVERLAYS.md) - Flavors and overlays guide
+
+### Which versions can I install?
+
+`nyia update list` shows the versions that are **installable**: your channel's current version plus
+the newest 4 releases of that channel, and every stable release, with the current channel pointers.
+(The channel's own version is always kept, so it is shown even when it is older than those 4.) Older
+releases still exist on GitHub but their container images are pruned, so they are hidden —
+`nyia update install <version>` refuses a version whose images are gone rather than installing a
+dist that cannot launch. That check applies to releases published with per-version image tags
+(v0.1.0-beta.10 onwards); for older releases it cannot tell, so it installs and warns.
+
+If a release turns out to be bad, the maintainer moves the channel back to the previous retained
+version. Your images follow on the next launch, and `nyia update` offers you the matching dist
+("the channel was rolled back to …"). `nyia update rollback` is different: it restores *your own*
+previous install.
+

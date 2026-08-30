@@ -122,3 +122,15 @@ Practical notes:
 - A LAN endpoint (`192.168.x.x`) is blocked under `network_egress_policy=restrict-local` unless listed in `network-allow.conf`; public endpoints are reachable.
 - A malformed layer-2/3 file stops OpenCode at startup with its own error — Nyia does not validate it.
 - **Threat note**: a repository's `opencode.json` runs with your keys inside the box: it can add `mcp` servers (local commands started with the CLI), `plugin`s, `permission` rules and providers with their own `baseURL`. Nyia runs a best-effort key-name scan and prints one warning when a project file appears to declare any of those (a determined repository can hide a key); the review is yours before launching a repository that is not yours (see [THREAT_MODEL.md](THREAT_MODEL.md)).
+
+## Version, channel and image selection
+
+| Knob | What it does |
+|---|---|
+| `~/.config/nyiakeeper/VERSION` | the installed dist version (written by the installer / `nyia update`) |
+| `~/.config/nyiakeeper/CHANNEL` | the update channel: `latest` (stable), `beta`, `alpha` (frozen). Switch with `nyia update install <channel>` |
+| `NYIA_CHANNEL` | overrides the channel for one command |
+| `NYIA_IMAGE_TAG` | **pins the container image tag** for one command, bypassing the channel — e.g. `NYIA_IMAGE_TAG=v0.1.0-beta.7 nyia-claude`. Works while that pinned tag is retained (newest 4 per channel + every stable) |
+
+By default the launcher pulls the channel's floating tag on every launch, so a channel that moves —
+forward on release, backward on a rollback — reaches you at the next start.
