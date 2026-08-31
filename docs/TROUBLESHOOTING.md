@@ -70,6 +70,19 @@ releases from v0.1.0-beta.10 onwards carry; for anything older the check cannot 
 install proceeds with a warning. If you need an exact old version, pin the image tag instead:
 `NYIA_IMAGE_TAG=v0.1.0-beta.7 nyia-claude` — that only works while that pinned tag still exists.
 
+## "Falling back to the channel image"
+
+Your installed version's image is no longer published — usually because retention pruned it (only
+the channel's current version plus the newest 4 are kept). The launcher warns once and starts with
+the channel image instead of refusing, so you are never stranded; the container may differ from your
+installed host scripts. Run `nyia update list` and move to a listed version to get back to a matched
+pair.
+
+You will NOT see this for an image you selected yourself: an explicit `--image` or
+`NYIA_IMAGE_TAG` that cannot be pulled is reported as that image failing, never silently swapped.
+A timeout or an authentication error does not trigger the fallback either — only a definitive
+"this tag does not exist" does, so a flaky network cannot quietly move you to a different version.
+
 ## `--list-images` says "No images found" but the assistant runs
 
 Fixed in Plan 344: the listing only matched locally built images (`nyiakeeper/<name>`), never the

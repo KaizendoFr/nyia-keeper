@@ -3656,12 +3656,32 @@ run_debug_shell() {
         print_verbose "Isolating node_modules with tmpfs mount (flavor: ${FLAVOR})"
     fi
 
-    # Try to pull image if using registry
-    if [[ "$full_image_name" == ghcr.io/* ]]; then
-        print_status "Pulling image from registry: $full_image_name"
-        docker pull "$full_image_name" 2>/dev/null || {
-            print_warning "Failed to pull $full_image_name - using local image if available"
-        }
+    # Try to pull image if using registry.
+    # Plan 346: when the ref is the immutable :v<version> tag we resolve cache-first and fall back to
+    # the channel tag ONLY on a definitive absence (pruned pin, or an advisory flavor never built).
+    # A moving channel tag keeps the unconditional pull so a promoted/rolled-back alias still reaches
+    # users. An explicit --image / NYIA_IMAGE_TAG is never silently replaced (D-3470).
+    if [[ "$full_image_name" == ghcr.io/* && "${_NYIA_EGRESS_ADOPTED:-0}" != "1" ]]; then
+        if nyia_image_is_auto_pinned_ref "$full_image_name"; then
+            local _img_rc=0
+            resolve_or_fallback_nyia_image "$full_image_name" || _img_rc=$?
+            if [[ "$_img_rc" -eq 10 ]]; then
+                nyia_warn_image_fallback_once "$full_image_name" "$NYIA_RESOLVED_IMAGE"
+                full_image_name="$NYIA_RESOLVED_IMAGE"
+                print_status "Pulling image from registry: $full_image_name"
+                docker pull "$full_image_name" 2>/dev/null || {
+                    print_warning "Failed to pull $full_image_name - using local image if available"
+                }
+            elif [[ "$_img_rc" -ne 0 ]]; then
+                print_warning "Could not fetch $full_image_name: ${NYIA_RESOLVE_ERROR:-(no detail)}"
+                print_warning "Using the local image if one is available (not switching versions)."
+            fi
+        else
+            print_status "Pulling image from registry: $full_image_name"
+            docker pull "$full_image_name" 2>/dev/null || {
+                print_warning "Failed to pull $full_image_name - using local image if available"
+            }
+        fi
     fi
 
     # Build additional credential mounts for codex (OpenAI CLI compatibility)
@@ -3809,6 +3829,84 @@ finish_container_session() {
     fi
     trap - EXIT
     return "$rc"
+}
+
+# --- Plan 346: version-coupled image resolution with a NARROW, explicit fallback ----------------
+#
+# The image is bound to the installed dist version (see _get_runtime_image_tag). A pinned tag can be
+# legitimately absent — pruned by retention, or an ADVISORY flavor package that was never built — so
+# there must be a fallback to the moving channel tag. That fallback is dangerous if applied broadly,
+# hence the three rules below (plan review R-High-3/R-High-5, D-3470):
+#
+#   1. ELIGIBILITY — only an AUTO-RESOLVED Nyia registry ref carrying a :v<version> tag may fall
+#      back. An explicit --image / NYIA_IMAGE_TAG choice, a digest ref, an untagged ref or a foreign
+#      registry is returned untouched: a deliberate choice must fail as itself, never be silently
+#      swapped for the current channel image.
+#   2. CACHE FIRST — a locally present pinned image is used with no pull at all, so an offline user
+#      holding a valid image is never switched.
+#   3. DEFINITIVE ABSENCE ONLY — only "manifest unknown / not found" falls back. A timeout, an auth
+#      failure or a dead Docker daemon is reported as itself; a transient fault must not quietly
+#      defeat version coupling.
+#
+# Echoes the ref to use. Returns 0 = use it · 10 = fell back (channel ref echoed) · 1 = hard failure.
+_nyia_channel_ref_for() {   # $1 = ghcr ref with a :v<version>[-egress] tag -> same repo, channel tag
+    local ref="$1" repo tag suffix="" channel
+    repo="${ref%:*}"; tag="${ref##*:}"
+    [[ "$tag" == *-egress ]] && suffix="-egress"
+    channel="$(_resolve_host_channel 2>/dev/null)"; channel="${channel:-beta}"
+    printf '%s:%s%s\n' "$repo" "$channel" "$suffix"
+}
+
+nyia_image_is_auto_pinned_ref() {   # 0 only for an auto-resolved Nyia ref we may fall back FROM
+    local ref="$1"
+    [[ -n "${NYIA_IMAGE_TAG:-}" || -n "${DOCKER_IMAGE:-}" ]] && return 1   # explicit choice
+    [[ "$ref" == *@* ]] && return 1                                        # digest ref
+    [[ "$ref" == */* ]] || return 1                                        # no registry
+    local last="${ref##*/}"
+    [[ "$last" == *:* ]] || return 1                                       # untagged
+    local tag="${ref##*:}"
+    [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-z]+\.[0-9]+)?(-egress)?$ ]] || return 1
+    # Must be OUR registry, not merely some registry hosting a repo named nyiakeeper-*.
+    # (A foreign host would otherwise be handed our fallback logic — plan review R-Med-3.)
+    local _reg; _reg="$(get_docker_registry 2>/dev/null)"
+    [[ -n "$_reg" ]] || return 1
+    [[ "$ref" == "${_reg}/nyiakeeper-"* ]] || return 1
+    return 0
+}
+
+# Sets NYIA_RESOLVED_IMAGE (the ref to use) and NYIA_RESOLVE_ERROR (diagnostics on failure).
+# Returns 0 = use it · 10 = fell back · 1 = hard failure.
+# NOTE: globals, not stdout — a caller using $(...) would run this in a subshell, where any variable
+# it set (the pull diagnostics) is discarded. That is how the transient-failure message silently
+# became "(no detail)" in the first cut.
+resolve_or_fallback_nyia_image() {
+    local ref="$1" out rc
+    NYIA_RESOLVED_IMAGE="$ref"; NYIA_RESOLVE_ERROR=""
+
+    nyia_image_is_auto_pinned_ref "$ref" || return 0     # not ours to second-guess
+    docker image inspect "$ref" >/dev/null 2>&1 && return 0   # cached: no pull, offline-safe
+
+    out=$(docker pull "$ref" 2>&1); rc=$?
+    if [[ "$rc" -eq 0 ]]; then
+        return 0
+    fi
+    # DEFINITIVE absence only, and matched against registry-manifest wording specifically. A bare
+    # "not found" also matches purely LOCAL faults — "docker: command not found", or Docker Desktop's
+    # `exec: "docker-credential-desktop": executable file not found in $PATH` — and treating those as
+    # "this version was pruned" is precisely the silent version switch this contract forbids.
+    if grep -qiE 'manifest unknown|manifest for [^ ]+ not found|no such manifest|repository name not known|name unknown' <<<"$out"; then
+        NYIA_RESOLVED_IMAGE="$(_nyia_channel_ref_for "$ref")"
+        return 10
+    fi
+    NYIA_RESOLVE_ERROR="$out"
+    return 1                                             # transient: caller reports, no silent switch
+}
+
+nyia_warn_image_fallback_once() {   # $1 = wanted ref, $2 = fallback ref
+    [[ -n "${_NYIA_FALLBACK_WARNED:-}" ]] && return 0
+    _NYIA_FALLBACK_WARNED=1
+    print_warning "Image ${1} is not published (pruned, or never built for this variant)."
+    print_warning "Falling back to the channel image ${2} — it may differ from your installed version."
 }
 
 run_docker_container() {
@@ -3964,8 +4062,48 @@ run_docker_container() {
         # :beta-egress would otherwise keep the withdrawn image forever — the normal image path
         # already re-pulls on every launch, so egress must behave the same.
         if [[ "$_egress_image" == ghcr.io/* ]]; then
-            print_status "Pulling egress-hardened image: $_egress_image"
-            docker pull "$_egress_image" >/dev/null 2>&1 || true
+            if nyia_image_is_auto_pinned_ref "$_egress_image"; then
+                # Plan 346: the ref is now :v<version>-egress. Immutable, so cache-first; and the
+                # fallback must be handled HERE, before the trust + identity gates below, so those
+                # gates still run on whatever we end up using. A generic fallback at the ordinary
+                # pull site further down would never reach this path (plan review R-High-4).
+                local _eg_rc=0 _eg_resolved
+                resolve_or_fallback_nyia_image "$_egress_image" || _eg_rc=$?
+                _eg_resolved="$NYIA_RESOLVED_IMAGE"
+                if [[ "$_eg_rc" -eq 10 ]]; then
+                    # Fell back to the channel tag. _nyia_channel_ref_for preserves the -egress
+                    # suffix, but assert it: under restrict-local the ORDINARY image is never an
+                    # acceptable substitute, and this is the last place to catch that.
+                    if [[ "$_eg_resolved" != *-egress ]]; then
+                        print_error "network egress: refusing a non-hardened fallback ('$_eg_resolved')."
+                        print_error "Refusing to launch under restrict-local (FAIL-CLOSED)."
+                        cleanup_env_file
+                        return 1
+                    fi
+                    nyia_warn_image_fallback_once "$_egress_image" "$_eg_resolved"
+                    _egress_image="$_eg_resolved"
+                    if ! _is_trusted_egress_source "$_egress_image"; then
+                        print_error "network egress: fallback '$_egress_image' is not from a trusted source."
+                        print_error "Refusing to launch under restrict-local (FAIL-CLOSED)."
+                        cleanup_env_file
+                        return 1
+                    fi
+                    print_status "Pulling egress-hardened image: $_egress_image"
+                    docker pull "$_egress_image" >/dev/null 2>&1 || true
+                elif [[ "$_eg_rc" -ne 0 ]]; then
+                    # Transient (timeout/auth/daemon): do NOT silently drop to the channel image.
+                    print_error "network egress: could not fetch '$_egress_image'."
+                    print_error "${NYIA_RESOLVE_ERROR:-(no detail)}"
+                    print_error "Refusing to launch under restrict-local (FAIL-CLOSED)."
+                    cleanup_env_file
+                    return 1
+                fi
+            else
+                # A moving channel tag: keep the Plan 344 UNCONDITIONAL pull, so a promoted or
+                # rolled-back alias still reaches egress users on their next launch.
+                print_status "Pulling egress-hardened image: $_egress_image"
+                docker pull "$_egress_image" >/dev/null 2>&1 || true
+            fi
         fi
 
         if ! docker image inspect "$_egress_image" >/dev/null 2>&1; then
@@ -3989,6 +4127,8 @@ run_docker_container() {
         fi
 
         full_image_name="$_egress_image"
+        _NYIA_EGRESS_ADOPTED=1   # this ref passed the trust + identity gates; nothing downstream
+                                 # may swap it, because those gates would not run again
         print_verbose "Using egress-hardened image: $full_image_name (identity verified)"
     fi
 
@@ -4088,12 +4228,32 @@ run_docker_container() {
     fi
     print_verbose "Mount verification: $global_config_dir -> /home/node/.${assistant_cli} (OK)"
 
-    # Try to pull image if using registry
-    if [[ "$full_image_name" == ghcr.io/* ]]; then
-        print_status "Pulling image from registry: $full_image_name"
-        docker pull "$full_image_name" 2>/dev/null || {
-            print_warning "Failed to pull $full_image_name - using local image if available"
-        }
+    # Try to pull image if using registry.
+    # Plan 346: when the ref is the immutable :v<version> tag we resolve cache-first and fall back to
+    # the channel tag ONLY on a definitive absence (pruned pin, or an advisory flavor never built).
+    # A moving channel tag keeps the unconditional pull so a promoted/rolled-back alias still reaches
+    # users. An explicit --image / NYIA_IMAGE_TAG is never silently replaced (D-3470).
+    if [[ "$full_image_name" == ghcr.io/* && "${_NYIA_EGRESS_ADOPTED:-0}" != "1" ]]; then
+        if nyia_image_is_auto_pinned_ref "$full_image_name"; then
+            local _img_rc=0
+            resolve_or_fallback_nyia_image "$full_image_name" || _img_rc=$?
+            if [[ "$_img_rc" -eq 10 ]]; then
+                nyia_warn_image_fallback_once "$full_image_name" "$NYIA_RESOLVED_IMAGE"
+                full_image_name="$NYIA_RESOLVED_IMAGE"
+                print_status "Pulling image from registry: $full_image_name"
+                docker pull "$full_image_name" 2>/dev/null || {
+                    print_warning "Failed to pull $full_image_name - using local image if available"
+                }
+            elif [[ "$_img_rc" -ne 0 ]]; then
+                print_warning "Could not fetch $full_image_name: ${NYIA_RESOLVE_ERROR:-(no detail)}"
+                print_warning "Using the local image if one is available (not switching versions)."
+            fi
+        else
+            print_status "Pulling image from registry: $full_image_name"
+            docker pull "$full_image_name" 2>/dev/null || {
+                print_warning "Failed to pull $full_image_name - using local image if available"
+            }
+        fi
     fi
 
     # Build additional credential mounts for codex (OpenAI CLI compatibility)
@@ -4354,8 +4514,11 @@ login_assistant() {
     # A local dev image (nyiakeeper/<name>:dev-<branch>) is only produced by @DEV_BUILD; it
     # can be stale relative to the current branch state, with no other signal that login is
     # running against it. Advisory only — never blocks, never changes which image is used, and
-    # is naturally inert in the runtime edition (which always resolves a registry :<version>
-    # tag). Prints only the image tag, never a secret. (Plan 305 / 275 hygiene)
+    # is naturally inert in the runtime edition, which resolves a registry ref rather than a local
+    # dev image. (Until Plan 346 this comment claimed the runtime "always resolves a :<version>
+    # tag" — it never did: the tag came from the CHANNEL. It does now, for installs at or after
+    # NYIA_PINNING_EPOCH, but older installs still resolve the channel tag.)
+    # Prints only the image tag, never a secret. (Plan 305 / 275 hygiene)
     if [[ "$full_image_name" == *:dev-* ]]; then
         print_warning "Login is using local dev image '$full_image_name' — it may be stale; rebuild with --build if auth behaves unexpectedly."
     fi
@@ -4364,8 +4527,20 @@ login_assistant() {
     if ! docker image inspect "$full_image_name" >/dev/null 2>&1; then
         # Inspect failed — try pulling if it looks like a registry image (macOS Docker Desktop compat)
         if is_registry_image "$full_image_name"; then
-            print_status "Image not found locally, pulling from registry (this may take a few minutes)..."
-            docker pull "$full_image_name" 2>/dev/null || true
+            # Plan 346: this presence/pull block runs BEFORE run_docker_container and hard-exits
+            # below, so the fallback has to happen HERE. Handling it only in run_docker_container
+            # left it unreachable on the primary launch path — a pruned pinned image exited 1
+            # instead of falling back (code review MF-1/MF-3).
+            local _rf_rc=0
+            resolve_or_fallback_nyia_image "$full_image_name" || _rf_rc=$?
+            if [[ "$_rf_rc" -eq 10 ]]; then
+                nyia_warn_image_fallback_once "$full_image_name" "$NYIA_RESOLVED_IMAGE"
+                full_image_name="$NYIA_RESOLVED_IMAGE"
+                print_status "Image not found locally, pulling from registry (this may take a few minutes)..."
+                docker pull "$full_image_name" 2>/dev/null || true
+            elif [[ "$_rf_rc" -ne 0 ]]; then
+                print_warning "Could not fetch $full_image_name: ${NYIA_RESOLVE_ERROR:-(no detail)}"
+            fi
         fi
     fi
     if ! docker image inspect "$full_image_name" >/dev/null 2>&1; then
@@ -4950,8 +5125,20 @@ run_assistant() {
     if ! docker image inspect "$full_image_name" >/dev/null 2>&1; then
         # Inspect failed — try pulling if it looks like a registry image (macOS Docker Desktop compat)
         if is_registry_image "$full_image_name"; then
-            print_status "Image not found locally, pulling from registry (this may take a few minutes)..."
-            docker pull "$full_image_name" 2>/dev/null || true
+            # Plan 346: this presence/pull block runs BEFORE run_docker_container and hard-exits
+            # below, so the fallback has to happen HERE. Handling it only in run_docker_container
+            # left it unreachable on the primary launch path — a pruned pinned image exited 1
+            # instead of falling back (code review MF-1/MF-3).
+            local _rf_rc=0
+            resolve_or_fallback_nyia_image "$full_image_name" || _rf_rc=$?
+            if [[ "$_rf_rc" -eq 10 ]]; then
+                nyia_warn_image_fallback_once "$full_image_name" "$NYIA_RESOLVED_IMAGE"
+                full_image_name="$NYIA_RESOLVED_IMAGE"
+                print_status "Image not found locally, pulling from registry (this may take a few minutes)..."
+                docker pull "$full_image_name" 2>/dev/null || true
+            elif [[ "$_rf_rc" -ne 0 ]]; then
+                print_warning "Could not fetch $full_image_name: ${NYIA_RESOLVE_ERROR:-(no detail)}"
+            fi
         fi
     fi
     if ! docker image inspect "$full_image_name" >/dev/null 2>&1; then

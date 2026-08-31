@@ -510,6 +510,16 @@ releases still exist on GitHub but their container images are pruned, so they ar
 dist that cannot launch. That check applies to releases published with per-version image tags
 (v0.1.0-beta.10 onwards); for older releases it cannot tell, so it installs and warns.
 
+**Switching a version switches the image too.** Since v0.1.0-beta.9 each release publishes
+per-version image tags, and the launcher runs the image belonging to your *installed* version — so
+going back to a retained version gives you that version's container, not just its host scripts.
+When two releases share the same image (a dist-only release rebuilds nothing), it is one image
+carrying several tags: Docker fetches a manifest and no layers, so the switch is near-instant.
+Installs older than v0.1.0-beta.9 predate per-version tags and keep following the channel image.
+If a version's image is no longer published, the launcher warns once and falls back to the channel
+image rather than refusing to start; an image you chose explicitly (`--image`, `NYIA_IMAGE_TAG`) is
+never silently replaced.
+
 If a release turns out to be bad, the maintainer moves the channel back to the previous retained
 version. Your images follow on the next launch, and `nyia update` offers you the matching dist
 ("the channel was rolled back to …"). `nyia update rollback` is different: it restores *your own*

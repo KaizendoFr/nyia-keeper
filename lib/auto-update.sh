@@ -368,11 +368,28 @@ fetch_latest_version() {
 # job's RETAIN_PER_FAMILY and docs/RELEASE_OPS.md.
 NYIA_RETAIN_PER_FAMILY="${NYIA_RETAIN_PER_FAMILY:-4}"
 
-# The FIRST release whose images carry per-version :v<version> tags (Plan 344). Anything older than
-# this never had pinned tags at all, so "no pinned tag" there means "predates pinning", NOT "pruned".
-# Without this the installer refuses versions that `nyia update list` still offers — the two
-# contradict each other, and the refusal is simply false (verified on the VM against beta.8).
-NYIA_PINNING_EPOCH="${NYIA_PINNING_EPOCH:-v0.1.0-beta.9}"
+# Release-version POLICY (the pinning epoch + its validated ordering) comes from the shared module,
+# never from a local copy — a duplicated constant is exactly the kind of cross-file drift that reads
+# as agreement until it silently isn't (Plan 346, D-3469). The module is deliberately tiny and
+# side-effect free so the updater does NOT have to source the launcher library.
+# Layouts: source/dist = <root>/bin/common/…  ·  installed = ~/.local/lib/nyiakeeper -> ../../bin/common/…
+_nyia_load_version_policy() {
+    local here="${BASH_SOURCE[0]%/*}" c
+    for c in "${here}/../bin/common/version-policy.sh" \
+             "${here}/../../bin/common/version-policy.sh"; do
+        if [[ -f "$c" ]]; then
+            # shellcheck source=/dev/null
+            source "$c"
+            return 0
+        fi
+    done
+    return 1
+}
+if ! _nyia_load_version_policy; then
+    # Fail SAFE: with no policy module we cannot tell "predates pinning" from "pruned", so never
+    # claim a version was pruned (the refusal below is skipped entirely).
+    nyia_version_at_or_after_epoch() { return 1; }
+fi
 
 # _version_family <tag> -> alpha | beta | stable | unknown
 _version_family() {
@@ -541,7 +558,7 @@ cli_targeted_update() {
             # A target OLDER than the pinning epoch predates per-version tags entirely: its missing
             # pinned tag says nothing about whether its images are still there. Refusing it would
             # contradict `nyia update list`, which still lists it as installable.
-            if compare_versions "$target_tag" "$NYIA_PINNING_EPOCH"; then
+            if ! nyia_version_at_or_after_epoch "$target_tag"; then
                 _pinning_in_use=2
             fi
             if [[ "$_pinning_in_use" -eq 0 ]]; then

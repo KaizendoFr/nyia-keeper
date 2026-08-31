@@ -781,9 +781,35 @@ _resolve_host_channel() {
 #   - default                -> :latest (same as "latest" channel)
 # This function does NOT apply to local dev builds (handled by get_docker_registry).
 _get_runtime_image_tag() {
-    # Explicit override wins (for testing or exact version pulls)
+    # Explicit override wins (for testing or exact version pulls). An explicitly chosen image is
+    # NEVER auto-replaced later: see resolve_or_fallback_nyia_image() (Plan 346, D-3470).
     if [[ -n "${NYIA_IMAGE_TAG:-}" ]]; then
         echo "$NYIA_IMAGE_TAG"
+        return
+    fi
+
+    # Plan 346: bind the image to the INSTALLED dist version, so "go back to the version that
+    # worked" returns its image too, and the dist/image pairing a user runs is the pairing CI built.
+    # Uses the ONE canonical host-version resolver (_resolve_host_version: NYIA_VERSION, then the
+    # XDG VERSION file) — a second reader could disagree and make the host advertise one version
+    # while running another's image (plan review R-High-1).
+    # nyia_version_at_or_after_epoch() also does the validation: empty, dev, latest, malformed and
+    # unknown prerelease families all fall through to the channel tag below.
+    # Only the registry branches of the callers use this value, so local/dev naming is untouched.
+    # An explicitly exported NYIA_CHANNEL is a deliberate "run this channel's image" instruction
+    # (the CHANNEL *file* is just persisted install state and does NOT suppress coupling). Honour it,
+    # for the same reason an explicit --image/NYIA_IMAGE_TAG is never silently replaced: a user's
+    # explicit choice must win over an inference. (Plan 346; caught by the coherence test.)
+    local _host_version
+    if [[ -z "${NYIA_CHANNEL:-}" ]]; then
+        _host_version="$(_resolve_host_version 2>/dev/null)"
+    else
+        _host_version=""
+    fi
+    if nyia_version_at_or_after_epoch "$_host_version"; then
+        # The VERSION file ships without a leading "v" in-repo and with one once installed;
+        # the ghcr tag always carries it.
+        echo "v${_host_version#v}"
         return
     fi
 
@@ -798,6 +824,18 @@ _get_runtime_image_tag() {
         *)       echo "beta" ;;  # Plan 320: unknown/no channel defaults to beta (was latest)
     esac
 }
+
+# Release-version policy (the pinning epoch + its validated ordering). Tiny and side-effect free;
+# shared verbatim with lib/auto-update.sh so the constant cannot drift (Plan 346, D-3469).
+if [[ -z "${_NYIA_VERSION_POLICY_LOADED:-}" ]]; then
+    if [[ -f "${BASH_SOURCE[0]%/*}/version-policy.sh" ]]; then
+        # shellcheck source=/dev/null
+        source "${BASH_SOURCE[0]%/*}/version-policy.sh"
+    else
+        # Fail SAFE: with no policy module, never bind to a version — keep the channel tag.
+        nyia_version_at_or_after_epoch() { return 1; }
+    fi
+fi
 
 # Get full image name with registry prefix
 get_image_name() {
