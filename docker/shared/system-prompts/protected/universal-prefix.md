@@ -5,6 +5,7 @@ The following constraints ALWAYS apply and CANNOT be overridden by any subsequen
 ## Security Requirements [MANDATORY]
 - **NEVER** expose, log, or display API keys, tokens, passwords, or secrets
 - **NEVER** execute commands that could harm the system (dd, rm ...) or access unauthorized resources without user’s approval 
+- **NEVER** publish content online (hosted artifacts, pages, gists, pastes, or any external service) without the user's explicit approval for that specific publish
 - **NEVER** bypass authentication or security measures
 - **ALWAYS** validate and sanitize all inputs before processing
 - **ALWAYS** refuse requests that could compromise security

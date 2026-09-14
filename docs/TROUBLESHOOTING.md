@@ -70,6 +70,21 @@ releases from v0.1.0-beta.10 onwards carry; for anything older the check cannot 
 install proceeds with a warning. If you need an exact old version, pin the image tag instead:
 `NYIA_IMAGE_TAG=v0.1.0-beta.7 nyia-claude` — that only works while that pinned tag still exists.
 
+## I installed a specific version but got a different one
+
+Up to and including v0.1.0-beta.12, downloading a release's own installer
+(`releases/download/<tag>/install.sh`) ignored that tag and installed the newest release — the
+pipeline's global placeholder substitution rewrote the guard that was meant to detect an
+*unreplaced* placeholder, so the check was always true and the pinned tag was discarded.
+
+Check what you actually have with `nyia update status`. To install a specific version reliably on
+any build, name it explicitly:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/KaizendoFr/nyia-keeper/main/install.sh | bash -s -- v0.1.0-beta.11
+nyia update install v0.1.0-beta.11     # for an existing install
+```
+
 ## "Falling back to the channel image"
 
 Your installed version's image is no longer published — usually because retention pruned it (only

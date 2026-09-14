@@ -135,13 +135,19 @@ if [[ "$RELEASE_TYPE" == channel:* ]]; then
         echo "❌ Could not resolve channel '$CHANNEL_NAME' from manifest"
         echo "   Manifest URL: $CHANNELS_MANIFEST_URL"
         echo "   Falling back to newest published release..."
-        RELEASE_TYPE="tags/v0.1.0-beta.12"
+        RELEASE_TYPE="latest"
     else
         echo "📦 Channel '$CHANNEL_NAME' resolved to: $TAG_NAME"
     fi
 fi
 
-if [[ "$RELEASE_TYPE" == "__RELEASE_TAG__" || "$RELEASE_TYPE" == "latest" ]]; then
+# The placeholder is SPLIT here for the same reason as line 98: the pipeline runs
+# `sed 's/__RELEASE_TAG__/tags\/<tag>/g'`, and a global replace rewrites comparisons too. Unsplit,
+# this line became `== "tags/v0.1.0-beta.N"` — precisely what the assignment above had just set — so
+# it was ALWAYS true in a release installer, which then threw the pinned tag away and installed
+# whatever /releases/latest returned. Downloading a specific release's install.sh gave you the
+# newest version instead of that one.
+if [[ "$RELEASE_TYPE" == "__RELEASE""_TAG__" || "$RELEASE_TYPE" == "latest" ]]; then
     # Resolve latest release (handles pre-releases which /releases/latest ignores)
     echo "📦 Finding latest release..."
     RELEASE_URL="https://api.github.com/repos/$PUBLIC_REPO/releases/latest"

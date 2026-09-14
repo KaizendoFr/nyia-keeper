@@ -56,6 +56,36 @@ Selection precedence (highest first): **positional version tag** →
 channel is written to the installed `CHANNEL` state so `nyia update` keeps
 following it.
 
+### Installing one specific version
+
+Name the version explicitly — either positionally or via `NYIA_VERSION`:
+
+```bash
+# positional
+curl -fsSL https://raw.githubusercontent.com/KaizendoFr/nyia-keeper/main/install.sh | bash -s -- v0.1.0-beta.11
+
+# or by env var
+NYIA_VERSION=v0.1.0-beta.11 bash -c "$(curl -fsSL https://raw.githubusercontent.com/KaizendoFr/nyia-keeper/main/install.sh)"
+```
+
+To move an **existing** install to another version, use the updater rather than re-running the
+installer — it also checks that the version's images are still published:
+
+```bash
+nyia update list                      # what is installable
+nyia update install v0.1.0-beta.11
+```
+
+Since v0.1.0-beta.9 each release publishes per-version image tags, so installing a specific version
+also gives you **that version's container image**, not just its host scripts.
+
+> **Downloading a release's own `install.sh`** (the
+> `releases/download/<tag>/install.sh` URL shown in release notes) installs **that** release.
+> In releases up to and including v0.1.0-beta.12 it did not: a bug made every release installer
+> discard its pinned tag and install the newest release instead. If you used that URL to pin a
+> version on an older build, check `nyia update status` — you may be on a different version than you
+> asked for. Naming the version explicitly, as above, has always worked.
+
 Channels: **`beta` (default)**, `latest` (stable — resolves only once a stable
 release exists), and `alpha` (**deprecated & frozen** — pinned at
 `v0.1.0-alpha.103` as a bridge for existing installs; it no longer receives
