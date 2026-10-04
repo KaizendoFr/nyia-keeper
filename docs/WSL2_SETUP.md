@@ -80,6 +80,7 @@ Nyia Keeper automatically detects WSL2 and adjusts Docker behavior — the same 
 | User mapping | `--user $(id -u):$(id -g)` | Docker Desktop handles |
 | Ollama access | `localhost:11434` | `host.docker.internal:11434` |
 | File matching | Case-sensitive (`-name`) | Case-insensitive on NTFS (`-iname`) |
+| OAuth MCP servers (`--mcp-auth`) | Supported | **Not supported** (see [macOS notes](MACOS_SETUP.md#oauth-mcp-servers-are-not-available-here)) |
 
 ---
 

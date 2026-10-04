@@ -29,6 +29,7 @@ Complete reference for all CLI flags and their interactions.
 | `--setup` | Config | - | - | Interactive setup |
 | `--path <dir>` | Config | - | - | Work on different project |
 | `--shell` | System | - | - | Interactive bash shell |
+| `--mcp-auth` | Auth | - | - | OAuth an MCP server (OpenCode, Linux only) |
 | `--check-requirements` | System | - | - | Verify system requirements |
 | `--disable-exclusions` | System | - | - | Disable mount exclusions |
 | `--skip-checks` | System | - | - | Skip startup checks |
@@ -180,7 +181,158 @@ Manage assistant authentication.
 | `--login` | Authenticate with the assistant's service |
 | `--force` | Bypass authentication checks (use with `--login`) |
 | `--set-api-key` | Set API key for team plan users (OpenCode) |
+| `--mcp-auth [name]` | Authenticate an OAuth-protected **remote MCP server** (OpenCode; **native Linux only** — see below) |
 | `--profile <name>` | Use a named profile: a separate account. Auth-only (the default) keeps your global skills/agents/rules; a persona has its own. See [Profiles](PROFILES.md). |
+
+#### OAuth MCP servers (`--mcp-auth`) — native Linux only
+
+A *remote* MCP server (`"type": "remote"`) usually authenticates with OAuth, which needs a browser. The
+assistant runs in a container with no browser, so the flow works like this:
+
+```bash
+nyia-opencode --mcp-auth               # or: --mcp-auth <server-name>
+# OpenCode prints an authorization URL — open it in your own browser.
+# Credentials are then stored and reused; you do not re-authenticate every run.
+```
+
+Add a server first. The easiest way is to let OpenCode write the file for you:
+
+```bash
+nyia-opencode --shell
+opencode mcp add my-server --url https://example.com/mcp
+opencode mcp auth list                 # per-server status
+```
+
+That writes your **global** config (`~/.config/nyiakeeper/opencode/opencode.json` on the host, which
+Nyia mounts as OpenCode's config dir), so the server is available in every project. To scope it to one
+project instead, put it in that project's own `opencode.json` — and `.gitignore` it if it is personal
+rather than something the team should get.
+
+⚠️ **If you write the file by hand, mind OpenCode's own hint.** When nothing is configured, OpenCode
+prints an example to add — but it shows a **fragment**:
+
+```jsonc
+// NOT a complete file — pasting this alone is invalid JSON
+"mcp": {
+  "my-server": { "type": "remote", "url": "https://example.com/mcp" }
+}
+```
+
+Pasted into an empty file that has no enclosing braces, and **OpenCode silently ignores a config it
+cannot parse** — so you get the same "No OAuth-capable MCP servers configured" message with no hint
+that your file was rejected. A complete file:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "my-server": { "type": "remote", "url": "https://example.com/mcp", "enabled": true }
+  }
+}
+```
+
+Check it parses before launching: `python3 -m json.tool opencode.json`.
+
+**Sharing MCP or model config with a team?** Use the project's own `opencode.json`, committed to the
+repository — that is OpenCode's native mechanism and everyone who clones gets it. Nyia's `team_dir`
+deliberately carries **skills, agents and prompts only, never config**: a shared source must not be able
+to silently add an MCP server, redirect a provider's `baseURL`, or change permissions. See
+[THREAT_MODEL.md](THREAT_MODEL.md) for the equivalent note about repository-supplied config — the same
+review applies, which is the point of putting it somewhere visible.
+
+**What the MCP server must support.** OpenCode mints its own OAuth client at auth time via **RFC 7591
+dynamic client registration**, so an authorization server that does not advertise a
+`registration_endpoint` fails with *"Incompatible auth server: does not support dynamic client
+registration"*. DCR is **optional** in the MCP spec, so a perfectly compliant server can hit this.
+**It is not a dead end** — give OpenCode a pre-registered client instead and the DCR path is never
+taken:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "my-server": {
+      "type": "remote",
+      "url": "https://example.com/mcp",
+      "oauth": { "clientId": "{env:MY_MCP_CLIENT_ID}" }
+    }
+  }
+}
+```
+
+**Try any value first — you may not need anything from the vendor.** Plenty of MCP servers never
+validate the client id, because the server is *itself* the OAuth client to an upstream identity
+provider and merely brokers the flow. In that design `"clientId": "opencode"` is enough, and the
+server's own registered client is what talks to the real IdP. **This is not theoretical — it is the
+path verified end to end against a real third-party OAuth MCP server**, including the token exchange,
+with an arbitrary client id and no vendor involvement. Check before asking anyone for
+credentials — it is two requests against public discovery metadata:
+
+```bash
+curl -s https://example.com/.well-known/oauth-protected-resource        # which AS serves this resource
+curl -s https://<as-host>/.well-known/oauth-authorization-server        # does it list registration_endpoint?
+# then: does /authorize accept an arbitrary client id?
+curl -s -o /dev/null -D - -G https://<as-host>/authorize \
+  --data-urlencode response_type=code --data-urlencode client_id=probe \
+  --data-urlencode 'redirect_uri=http://127.0.0.1:19876/mcp/oauth/callback' \
+  --data-urlencode code_challenge_method=S256 --data-urlencode code_challenge=<43-char-base64url>
+```
+
+A **302** means the id was accepted and you can stop there. An error means the server keeps a client
+allow-list, and *then* ask the vendor for a `client_id` (plus `clientSecret` only if the client is
+confidential — if the metadata says `"token_endpoint_auth_methods_supported": ["none"]`, there is no
+secret to issue) with the redirect URI **`http://127.0.0.1:19876/mcp/oauth/callback`** registered,
+`authorization_code` + `refresh_token` grants and PKCE `S256`. That is a far smaller ask than
+implementing DCR. `callbackPort` and `redirectUri` change those defaults if they insist on others.
+
+⚠️ `"oauth": {}` is **not** the same as omitting it and **not** the same as `false`: an empty object
+leaves auto-detection on with no client id, so DCR is still attempted. Use `"oauth": false` to turn
+OAuth off outright — which is what you want if the server authenticates with a static token instead:
+
+```json
+{ "mcp": { "my-server": { "type": "remote", "url": "https://example.com/mcp",
+    "oauth": false, "headers": { "Authorization": "Bearer {env:MY_API_KEY}" } } } }
+```
+
+Diagnose either path with `opencode mcp debug <name>` inside the box: it reports the status code, the
+`WWW-Authenticate` header, and whether a client id was found.
+
+**Confirm it persisted — the check that actually matters.** Authenticating proves the flow works; it
+does not prove the credential survives. Run `opencode mcp auth list` in a **fresh** session (exit, then
+launch again) and look for the tick rather than re-reading the output of the session that just
+authenticated. Persistence comes from Nyia pointing OpenCode's XDG data tree at the mounted global
+config dir, so a credential obtained on one machine stays on that machine — authenticate once per
+machine, not once per session.
+
+**Why native Linux only.** OpenCode binds its OAuth callback to `127.0.0.1:19876` *inside* the
+container. On native Linux Nyia uses `--network host`, so that loopback is your machine's and the
+browser reaches it. On Docker Desktop (macOS / WSL2) there is no host networking, and Docker's port
+forwarding reaches the container's bridge address rather than its loopback — so the browser cannot
+deliver the authorization code. MCP OAuth also has no device-code flow, so the workaround used for
+`codex --login` does not apply. `--mcp-auth` therefore refuses on those platforms with an explanation.
+
+This is a scope decision, not a technical dead end: a port relay would solve it. **If you need macOS or
+Windows support, please open an issue** and it can be built.
+
+**Not available under `restrict-local`.** `--mcp-auth` launches its container through the same path as
+`--shell`, which is refused when `network_egress_policy=restrict-local` because that path skips the
+entrypoint that installs the egress firewall. The refusal is deliberate — permitting it would run an
+*unfirewalled* container in a project that asked for restriction — but the message mentions the debug
+shell, so it can read oddly if you only typed `--mcp-auth`. Authenticate with the policy off for that
+project, then turn it back on; the stored credential persists.
+
+**What the server can see — read this before authenticating one.** A remote MCP server is a *third
+party in your session*. When the assistant calls one of its tools, the call carries whatever the model
+puts in the arguments — which in practice can include file contents, paths and excerpts of your
+conversation. Nyia cannot scope that: it does not sit between the assistant and the server, and it has
+no way to know what a given tool call will contain. The credential `--mcp-auth` stores is a **standing
+grant** — it persists across runs by design, and revoking it is done at the server, not here.
+
+So authenticating a remote MCP server is a trust decision about **its operator**, not just a
+connection. Prefer servers you or your organisation run. If you want the exposure bounded, add the
+server to a single project's config rather than your global one, so it is not present in every session.
+This is distinct from the *planted-config* risk in [THREAT_MODEL.md](THREAT_MODEL.md) — that one is
+about a repository adding a server you never chose; this one is about a server you chose on purpose.
 
 ### Profiles (`nyia profile`)
 

@@ -188,6 +188,7 @@ get_assistant_arg_desc() {
         "--check-requirements") echo "Check system requirements (Git, Docker, permissions)" ;;
         "--skip-checks") echo "Skip automatic requirements checking" ;;
         "--shell") echo "Start interactive bash shell in container" ;;
+        "--mcp-auth") echo "Authenticate an OAuth MCP server (opencode, native Linux only)" ;;
         "--set-api-key") echo "Helper to set OpenAI API key for team plan users" ;;
         "--disable-exclusions") echo "Disable mount exclusions for this session" ;;
         "--prompt,-p") echo "Explicit user prompt (deprecated flag, use interactive mode)" ;;
@@ -204,7 +205,7 @@ get_assistant_arg_desc() {
 
 # Get all assistant arguments (for iteration)
 get_assistant_args() {
-    echo "--image --profile --flavor --list-flavors --no-cache --status --list-images --base-branch --work-branch,-w --create --build-custom-image --egress --setup --login --check-requirements --skip-checks --shell --set-api-key --disable-exclusions --agent --list-agents --list-skills --workspace-init --rag --rag-verbose"
+    echo "--image --profile --flavor --list-flavors --no-cache --status --list-images --base-branch --work-branch,-w --create --build-custom-image --egress --setup --login --check-requirements --skip-checks --shell --mcp-auth --set-api-key --disable-exclusions --agent --list-agents --list-skills --workspace-init --rag --rag-verbose"
 }
 
 # Get description for dispatcher arguments
@@ -385,6 +386,7 @@ EOF
 Operations:
   --shell                  # Interactive bash in container
   --login                  # Authenticate assistant
+  --mcp-auth [name]        # OAuth an MCP server (opencode, native Linux only)
   --status                 # Show current config & overlays
 Branch Strategy (default: work on current branch):
   -w, --work-branch <name> # Switch to specific work branch
@@ -641,6 +643,15 @@ parse_assistant_args() {
                 ;;
             --shell)
                 SHELL_MODE="true"
+                shift
+                ;;
+            --mcp-auth)
+                MCP_AUTH_MODE="true"
+                # An optional server name; anything starting with - is the next flag, not a name.
+                if [[ -n "${2:-}" && "${2:0:1}" != "-" ]]; then
+                    MCP_AUTH_NAME="$2"
+                    shift
+                fi
                 shift
                 ;;
             --set-api-key)

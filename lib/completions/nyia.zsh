@@ -106,6 +106,19 @@ _nyia() {
                 fi
             fi
             ;;
+        git-history)
+            if (( CURRENT == 3 )); then
+                local -a gh_cmds=(
+                    'status:Show the git-history cutoff state'
+                    'reconcile:Reconcile the recorded cutoff with the repo'
+                    'rebuild:Rebuild the cutoff record'
+                    'help:Show git-history help'
+                )
+                _describe 'git-history command' gh_cmds
+            elif (( CURRENT >= 4 )) && [[ "${words[3]}" == "reconcile" ]]; then
+                compadd -- --apply --discard
+            fi
+            ;;
         update)
             if (( CURRENT == 3 )); then
                 local -a update_cmds=(
@@ -151,6 +164,7 @@ _nyia_assistant() {
         '--login:Authenticate using the assistant container'
         '--force:Force operation (with --login)'
         '--shell:Start interactive bash shell in container'
+        '--mcp-auth:Authenticate an OAuth MCP server (opencode, native Linux only)'
         '--image:Select specific Docker image'
         '--profile:Named auth profile (multiple accounts per assistant)'
         '--flavor:Select assistant flavor/variant'
@@ -174,6 +188,7 @@ _nyia_assistant() {
         '--rag-verbose:Enable verbose debug logging for RAG'
         '--workspace-init:Create workspace.conf template'
         '--build-custom-image:Build custom Docker image with overlays'
+        '--egress:Build/use the egress-filtered image variant'
         '--no-cache:Force Docker rebuild without cache'
         '--setup:Interactive model/provider setup'
         '--set-api-key:Helper to set API key'

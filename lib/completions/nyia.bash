@@ -104,6 +104,7 @@ _nyia_assistant() {
         --status
         --login --force
         --shell
+        --mcp-auth
         --image
         --profile
         --flavor

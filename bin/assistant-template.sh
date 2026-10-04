@@ -342,6 +342,14 @@ WORKSPACE_TEMPLATE
     fi
 
     # Handle interactive setup mode (OpenCode model selection)
+    # Plan 358: gate --mcp-auth before any container work, so an unsupported platform fails fast with
+    # an explanation rather than part-way through a launch.
+    if [[ "${MCP_AUTH_MODE:-false}" == "true" ]]; then
+        if ! nyia_mcp_auth_preflight "$ASSISTANT_CLI"; then
+            exit 1
+        fi
+    fi
+
     if [[ "$SETUP_MODE" == "true" ]]; then
         if [[ "$ASSISTANT_CLI" == "opencode" ]]; then
             "$NYIAKEEPER_HOME/bin/opencode-setup.sh"

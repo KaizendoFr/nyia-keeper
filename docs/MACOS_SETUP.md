@@ -114,8 +114,20 @@ Nyia Keeper automatically detects macOS (and WSL2) and adjusts:
 | Network mode | `--network host` | Bridge (default) |
 | User mapping | `--user $(id -u):$(id -g)` | Docker Desktop handles |
 | Ollama access | `localhost:11434` | `host.docker.internal:11434` |
+| OAuth MCP servers (`--mcp-auth`) | Supported | **Not supported** — see below |
 
 > WSL2 users have identical Docker Desktop behavior. See [WSL2 Setup Guide](WSL2_SETUP.md).
+
+### OAuth MCP servers are not available here
+
+`nyia-<assistant> --mcp-auth` refuses on macOS. An OAuth-protected remote MCP server needs your browser
+to reach the CLI's callback, which OpenCode binds to `127.0.0.1:19876` *inside* the container. Without
+host networking, Docker's port forwarding reaches the container's bridge address rather than its
+loopback, so the code never arrives — and MCP OAuth has no device-code flow to fall back on.
+
+Nyia tells you this rather than failing obscurely. A port relay would fix it; it is unbuilt because
+today's users are on Linux. **If you need it, please open an issue.** MCP servers that need no auth, and
+local (`stdio`) MCP servers such as Nyia's own codebase search, work normally.
 
 ### File Permissions
 

@@ -3303,6 +3303,47 @@ provider_supports_device_code_flag() {
     esac
 }
 
+# Plan 358: gate `--mcp-auth` to native Linux.
+#
+# An OAuth-protected remote MCP server needs a browser, and the browser must reach the CLI's OAuth
+# callback. OpenCode binds that callback to 127.0.0.1:19876 ONLY (measured), so on Docker Desktop
+# (macOS / WSL2) it is unreachable: port forwarding targets the container's bridge IP, not its
+# loopback — the same constraint already documented for codex at :5017-5020. And unlike codex there is
+# no device-code fallback: MCP OAuth registers grant_types ["authorization_code","refresh_token"] only.
+#
+# On native Linux it simply works, because get_docker_network_args returns --network host and the
+# container's loopback IS the host's (verified end to end against a mock authorization server).
+#
+# A relay (container-side 0.0.0.0 listener + a 127.0.0.1-published port) would make Docker Desktop work
+# and is feasible — python3 is in the image and the node user can bind 0.0.0.0 — but Nyia's users are on
+# Linux today, so it is deliberately not built. This refusal is the promise that it can be.
+#
+# All output goes to STDERR: the launch path captures stdout in $( ), which is exactly how Plan 348's
+# diagnostics got swallowed.
+nyia_mcp_auth_preflight() {
+    local assistant_cli="${1:-}"
+
+    if [[ "$assistant_cli" != "opencode" ]]; then
+        print_error "--mcp-auth is implemented for opencode only (requested: ${assistant_cli:-none})." >&2
+        print_error "  Other assistants support MCP, but each CLI has its own OAuth callback and flow," >&2
+        print_error "  so each needs its own verification. Ask if you need one and it can be added." >&2
+        return 1
+    fi
+
+    if uses_docker_desktop; then
+        print_error "--mcp-auth requires native Linux; it is not supported on Docker Desktop (macOS / WSL2)." >&2
+        print_error "  Why: OpenCode binds its OAuth callback to 127.0.0.1:19876 inside the container, and" >&2
+        print_error "  Docker port forwarding reaches the container's bridge address rather than its loopback," >&2
+        print_error "  so your browser cannot deliver the authorization code. MCP OAuth also offers no" >&2
+        print_error "  device-code flow, so the workaround used for 'codex --login' does not apply here." >&2
+        print_error "  This is a deliberate scope choice, not a dead end — a port relay would solve it." >&2
+        print_error "  If you need macOS or Windows support, please open an issue and it can be built." >&2
+        return 1
+    fi
+
+    return 0
+}
+
 # Plan 274: normalize a stale Claude AUTH_METHOD=device_code to the supported
 # token_setup login mode. Older auto-generated claude.conf files (created when
 # the example still defaulted to device_code) would otherwise append an
@@ -3551,6 +3592,13 @@ run_debug_shell() {
     local container_name="$5"
     local config_dir_name="$6"
     local assistant_cli="$7"
+    # Plan 358: when non-empty, run this command instead of an interactive shell. Reusing this
+    # function rather than adding a fourth docker-run site keeps the mount set single-sourced — three
+    # sites built mounts two different ways before Plan 353, and a fix applied to only some of them is
+    # the classic partial-wiring failure.
+    local shell_command="${8:-}"
+    local -a shell_cmd_args=()
+    [[ -n "$shell_command" ]] && shell_cmd_args=(-c "$shell_command")
 
     print_verbose "Starting debug shell container $container_name"
     print_verbose "Image: $full_image_name"
@@ -3734,6 +3782,7 @@ run_debug_shell() {
         "${shm_args[@]}" \
         "${sandbox_security_args[@]}" \
         --entrypoint bash \
+        -w "$container_path" \
         "${VOLUME_ARGS[@]}" \
         -v "$project_data_dir":/data:rw \
         -v "$global_config_dir":/nyia-global:rw \
@@ -3742,7 +3791,7 @@ run_debug_shell() {
         "${credential_mounts[@]}" \
         "${docker_env_args[@]}" \
         --name "$container_name" \
-        "$full_image_name"
+        "$full_image_name" "${shell_cmd_args[@]+"${shell_cmd_args[@]}"}"
 
     # Cleanup immediately after Docker run
     cleanup_env_file
@@ -5394,7 +5443,15 @@ run_assistant() {
 
     fi
 
-    if [[ "$shell_mode" == "true" ]]; then
+    if [[ "${MCP_AUTH_MODE:-false}" == "true" ]]; then
+        # Plan 358: OAuth an MCP server. The platform/assistant gate already ran in the launcher before
+        # any container work, so reaching here means it is supported.
+        print_status "Authenticating an OAuth MCP server..."
+        print_status "An authorization URL will be printed — open it in your own browser."
+        run_debug_shell "$full_image_name" "$project_path" "$project_data_dir" "$global_config_dir" \
+            "$container_name" "$config_dir_name" "$assistant_cli" \
+            "opencode mcp auth ${MCP_AUTH_NAME:-}"
+    elif [[ "$shell_mode" == "true" ]]; then
         # Shell mode - debug bash shell (bypass git-entrypoint)
         print_status "Starting debug shell..."
         print_status "🐚 Debug shell mode - direct container access, no git workflow"

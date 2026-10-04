@@ -27,7 +27,8 @@ layer on top. See [How Nyia compares](COMPARISON.md).
   unless you enable [Git History Cutoff](GIT_HISTORY_CUTOFF.md).
 - **Network is a separate, opt-in axis.** By default the container has ordinary network access; it can
   exfiltrate what's in the box and reach your LAN, host services, and cloud metadata. Turn on
-  [restrict-local](NETWORK_EGRESS.md) (Linux) when that matters.
+  [restrict-local](NETWORK_EGRESS.md) (Linux) when that matters — but note it closes the **LAN/host**
+  half only: public web egress stays open, so it does not stop exfiltration.
 - **Exclusions are patterns, not magic.** They can't know a custom-named secret is sensitive — you
   extend the list.
 - **The assistant's own project config is repository content.** OpenCode reads `opencode.json` from
@@ -37,6 +38,13 @@ layer on top. See [How Nyia compares](COMPARISON.md).
   refuses to write through a repository-planted link in the project, and runs a best-effort key-name scan
   that warns once (a determined repository can hide a key); the review is yours (see
   [CONFIGURATION.md](CONFIGURATION.md#opencode-configuration--the-layers)).
+- **A remote MCP server you authenticate is a third party in the session.** `--mcp-auth`
+  (see "OAuth MCP servers" in [CLI_REFERENCE.md](CLI_REFERENCE.md)) stores an OAuth
+  grant, and the assistant then calls that server's tools; each call carries whatever the model puts in
+  its arguments — potentially file contents, paths and excerpts of your conversation. Nyia does not sit
+  in that path and cannot scope it, and the grant stands until you revoke it **at the server**. That is
+  a trust decision about the operator — distinct from the planted-config bullet above, which is about a
+  *repository* adding a server you did not choose.
 - **Not independently audited.** It's a solo, beta-quality project — use at your own risk.
 
 ## Shared team content: a structural shield, not content review

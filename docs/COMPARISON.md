@@ -10,7 +10,7 @@ secrets, a git-safe reviewable workflow, and one setup across several assistants
 | Isolation boundary | Container (shares host kernel) | **microVM (hardware)** | Container | **None** — full host access |
 | Hides *your secrets* from the agent | **Yes** — auto-excluded + you curate | No — mounts the project wholesale | No | No |
 | Git-safe by default (protected branches) | **Yes** | No | No | No |
-| Network egress control | Opt-in allowlist (Linux) | Yes (its own) | No | No |
+| Network egress control | Opt-in LAN allowlist (Linux; public egress stays open) | Yes (its own) | No | No |
 | Reviewed workflow (plan → review → checkpoint) | **Yes, shipped** | No | No | No |
 | Multi-assistant (Claude/Gemini/Codex/OpenCode/Vibe) | **Yes (5)** | Runs agents, not an orchestration layer | No | One at a time |
 | Runs | On your machine | On your machine | On your machine / IDE | On your machine |
