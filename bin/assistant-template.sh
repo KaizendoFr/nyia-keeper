@@ -345,7 +345,7 @@ WORKSPACE_TEMPLATE
     # Plan 358: gate --mcp-auth before any container work, so an unsupported platform fails fast with
     # an explanation rather than part-way through a launch.
     if [[ "${MCP_AUTH_MODE:-false}" == "true" ]]; then
-        if ! nyia_mcp_auth_preflight "$ASSISTANT_CLI"; then
+        if ! nyia_mcp_auth_preflight "$ASSISTANT_CLI" "$PROJECT_PATH"; then
             exit 1
         fi
     fi

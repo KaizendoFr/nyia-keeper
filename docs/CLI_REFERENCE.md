@@ -297,6 +297,58 @@ OAuth off outright — which is what you want if the server authenticates with a
 Diagnose either path with `opencode mcp debug <name>` inside the box: it reports the status code, the
 `WWW-Authenticate` header, and whether a client id was found.
 
+**What OpenCode's last line actually means.** These were measured against a local mock authorization
+server, so each one maps to a definite cause rather than a guess:
+
+| OpenCode ends with | What happened | What to do |
+|---|---|---|
+| `Incompatible auth server: does not support dynamic client registration` | The server advertises no `registration_endpoint` and your config names no client id, so there is no client to authorize as. | Add `"oauth": {"clientId": "…"}` — see the pre-registered-client path above. |
+| `unknown client` (or another phrase from the server) | The authorization server refused your `client_id`. The text is the server's own `error_description`. | Ask the vendor to register the id, or use the one they issued. |
+| `Operation timed out after 30000ms` | Authorization **succeeded** — including the token exchange — but the follow-up connection to the MCP server did not complete within 30s. | Look at the MCP endpoint itself, not at OAuth. |
+| `Unexpected status: needs_auth` | The browser **did** come back, and then **connecting** to the MCP endpoint raised an OAuth/401 error. In OpenCode this status is set on the *connection* path, not by the callback handler — so `state` validated and the token exchange did not throw. The credential exists and the resource server will not accept it. | Run `opencode mcp debug <name>` in the box: it prints the endpoint's status code **and the first 500 bytes of its response body**, which is the only thing that says why. Then suspect the token's audience/`resource`, its scope, or your account's entitlement on the server — not the flow and not the callback. |
+| It sits on `Waiting for authorization…` and never stops | Nothing reached the callback. **There is no timeout on this wait** — it will hold indefinitely. | The browser never completed, or it is not on the machine running Docker. Ctrl-C and retry. |
+
+The last two rows are the ones worth internalising: because the wait never times out, a run that
+*ends by itself* proves the callback was delivered. That rules out the whole class of
+"my browser could not reach the container" causes, which is otherwise the first thing to suspect.
+
+**Find out what the endpoint really is — do not assume a path.** Some servers expose MCP at a path
+(`/mcp`), others at the **origin itself**; `/mcp` on a root-mounted server is a 404. Two `curl`s settle
+it in seconds, and they need no credentials:
+
+```bash
+curl -s -o /dev/null -D - -X GET https://<host>/        # and again with /mcp
+```
+
+- `405 Method Not Allowed` with **`Allow: POST, DELETE`** → that *is* the MCP endpoint. Streamable
+  HTTP speaks POST, so a plain GET is supposed to be rejected.
+- `404` → wrong path.
+
+Then POST an `initialize` to the URL you picked and read the `401`:
+
+```bash
+curl -s -D - -X POST https://<host>/ -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"diag","version":"0"}}}'
+```
+
+A conformant OAuth-protected MCP server answers that `401` with a **`WWW-Authenticate`** header
+carrying `resource_metadata` (RFC 9728) — that is how a client is *supposed* to find the authorization
+server. If the header is absent, the server is not advertising it, and a client can only get there by
+guessing the origin's `/.well-known/oauth-protected-resource` and
+`/.well-known/oauth-authorization-server`. Check those directly:
+
+```bash
+curl -s https://<host>/.well-known/oauth-protected-resource
+curl -s https://<host>/.well-known/oauth-authorization-server
+```
+
+Read `registration_endpoint` and `token_endpoint_auth_methods_supported` from the second one: no
+`registration_endpoint` means dynamic registration is impossible and you **must** configure a
+`clientId`; `["none"]` means a public client with no secret. If the metadata says `none` but
+`/token` answers `{"error":"invalid_client"}`, those two statements contradict each other and that
+contradiction is the thing to take to whoever runs the server.
+
 **Confirm it persisted — the check that actually matters.** Authenticating proves the flow works; it
 does not prove the credential survives. Run `opencode mcp auth list` in a **fresh** session (exit, then
 launch again) and look for the tick rather than re-reading the output of the session that just
@@ -313,6 +365,52 @@ deliver the authorization code. MCP OAuth also has no device-code flow, so the w
 
 This is a scope decision, not a technical dead end: a port relay would solve it. **If you need macOS or
 Windows support, please open an issue** and it can be built.
+
+### Ask the server's operator for these three things, before you start
+
+Most of the pain in authenticating a remote MCP server is discovering that something exists which
+nobody mentioned. If the authorization server has **no `registration_endpoint`** (check its
+`/.well-known/oauth-authorization-server`), dynamic registration is impossible and **a client ID must
+be issued to you**. Nothing in the flow announces that; you simply get an auth failure. So ask for:
+
+1. **The MCP endpoint URL.** It may be a path (`/mcp`) or the origin itself — verify with `curl`
+   (see above); guessing produces a 404 or a confusing 401.
+2. **The OAuth client ID**, and a **client secret** if the client is confidential. If the metadata says
+   `"token_endpoint_auth_methods_supported": ["none"]`, there is no secret to issue.
+3. **The redirect URI(s) they must register — these differ per assistant**, so a client ID that works
+   in one CLI can fail in another:
+
+| Assistant | Where the client ID goes | Redirect URI it will use |
+|---|---|---|
+| **OpenCode** (`--mcp-auth`) | `"oauth": {"clientId": …, "clientSecret": …}` in `opencode.json` | `http://127.0.0.1:19876/mcp/oauth/callback` — fixed |
+| **Claude Code** | `claude mcp add --transport http <name> <url> --client-id <id> [--client-secret]` | `http://localhost:<port>/callback` — port is random unless you pin it with `--callback-port` |
+| **Codex** | `codex mcp add <name> --url <url> --oauth-client-id <id>` | `http://127.0.0.1:<port>/callback/<token>` — **both the port and the path segment are random per run** |
+
+Codex's randomised path is worth flagging when you ask: it **cannot be pre-registered**, so it only
+works against an authorization server that allows loopback redirects loosely (as RFC 8252 §7.3
+recommends for native apps) rather than by exact string match. OpenCode's is a single fixed string,
+and Claude Code's becomes one as soon as you pass `--callback-port`.
+
+### Using Claude Code or Codex instead of OpenCode
+
+`--mcp-auth` is implemented for OpenCode only — each CLI has its own flow, and each needs its own
+verification before Nyia claims it works. The other two are reachable through the debug shell:
+
+```bash
+nyia-claude --shell      # then: claude mcp add --transport http <name> <url> --client-id <id>
+                         #       claude mcp login <name> --no-browser
+nyia-codex  --shell      # then: codex mcp add <name> --url <url> --oauth-client-id <id>
+```
+
+Two behaviours found by measurement rather than documentation:
+
+- **Claude Code's `--no-browser` prints the URL and takes the redirect URL pasted back.** Nothing has
+  to reach the container's loopback, so this path does not depend on `--network host` and is not
+  subject to the platform limit described above. It does need a real terminal — it refuses with
+  *"stdin isn't a terminal"* otherwise.
+- **`codex mcp add --oauth-client-id` starts the OAuth flow immediately**, during `add`, not at
+  `login`. It prints the URL when it cannot open a browser, but it waits for the callback, so it does
+  need the loopback reachable.
 
 **Not available under `restrict-local`.** `--mcp-auth` launches its container through the same path as
 `--shell`, which is refused when `network_egress_policy=restrict-local` because that path skips the

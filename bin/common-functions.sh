@@ -3322,6 +3322,7 @@ provider_supports_device_code_flag() {
 # diagnostics got swallowed.
 nyia_mcp_auth_preflight() {
     local assistant_cli="${1:-}"
+    local project_path="${2:-$(pwd)}"
 
     if [[ "$assistant_cli" != "opencode" ]]; then
         print_error "--mcp-auth is implemented for opencode only (requested: ${assistant_cli:-none})." >&2
@@ -3341,6 +3342,180 @@ nyia_mcp_auth_preflight() {
         return 1
     fi
 
+    # The native-Linux promise above holds only while get_docker_network_args returns
+    # --network host, and under restrict-local it returns the egress BRIDGE instead — at
+    # which point the callback is unreachable for exactly the Docker Desktop reason.
+    # run_debug_shell does refuse this case (fail-closed, :4178), but it refuses in the
+    # debug shell's words: a user who typed --mcp-auth is told the "Debug shell is not
+    # available", which reads as unrelated. Refuse here instead, in MCP-auth's own terms.
+    # Read-only: resolving the policy must not create the bridge this path will never use.
+    if ! declare -f resolve_and_export_egress_policy >/dev/null 2>&1; then
+        local _pol_dev="$script_dir/../lib/command-policy.sh"
+        local _pol_inst="$HOME/.local/lib/nyiakeeper/command-policy.sh"
+        [[ -f "$_pol_dev" ]] && source "$_pol_dev"
+        [[ ! -f "$_pol_dev" && -f "$_pol_inst" ]] && source "$_pol_inst"
+    fi
+    if declare -f resolve_and_export_egress_policy >/dev/null 2>&1; then
+        resolve_and_export_egress_policy "$assistant_cli" "$project_path"
+    fi
+    if [[ "${NYIA_EFFECTIVE_EGRESS_POLICY:-off}" == "restrict-local" ]]; then
+        print_error "--mcp-auth is not available while network_egress_policy=restrict-local." >&2
+        print_error "  Why: under that policy the container joins the egress bridge instead of host" >&2
+        print_error "  networking, so OpenCode's callback on 127.0.0.1:19876 is inside the container" >&2
+        print_error "  only and your browser cannot deliver the authorization code." >&2
+        print_error "  Fix: set network_egress_policy=off for this project, run --mcp-auth once, then" >&2
+        print_error "  turn the policy back on. The stored credential persists, so this is one-time." >&2
+        return 1
+    fi
+
+    nyia_mcp_auth_config_preflight "$project_path" "${MCP_AUTH_NAME:-}"
+
+    return 0
+}
+
+# Plan 358 step 9: the config lint never runs on this path.
+#
+# --mcp-auth goes through run_debug_shell, which replaces the entrypoint with bash — so provider_init,
+# and with it warn_project_opencode_config, never executes. A config problem therefore reaches the user
+# as OpenCode's own generic message with no hint from Nyia.
+#
+# These checks are ADVISORY: they print and return 0. Getting them wrong must never block a launch that
+# would have worked, because the shapes below are heuristics (see _mcp_declares_remote).
+# All output is STDERR — the launch path captures stdout in $( ).
+MCP_OAUTH_CALLBACK_URI="http://127.0.0.1:19876/mcp/oauth/callback"
+
+# The project-side config layers OpenCode loads, in its own load order (read from its DEBUG log).
+# The global layer is deliberately out of scope here: at preflight time the mounted config dir is not
+# yet resolved, and guessing its host path would produce confident nonsense.
+_mcp_config_layers() {
+    local project_path="$1" f
+    for f in "$project_path/opencode.json" "$project_path/opencode.jsonc" \
+             "$project_path/.opencode/opencode.json" "$project_path/.opencode/opencode.jsonc"; do
+        [[ -f "$f" ]] && printf '%s\n' "$f"
+    done
+    return 0
+}
+
+# 0 = parses, 1 = does NOT parse, 2 = no tool available to judge (never report a problem on 2).
+# jq is optional on the host (lib/auto-update.sh only uses it when present), so python3 is the
+# fallback and "neither" is a real outcome rather than an error.
+_mcp_json_parses() {
+    local f="$1"
+    if command -v jq >/dev/null 2>&1; then
+        jq -e . "$f" >/dev/null 2>&1 && return 0 || return 1
+    fi
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$f" >/dev/null 2>&1 \
+            && return 0 || return 1
+    fi
+    return 2
+}
+
+# Best-effort key scan, in the spirit of warn_project_opencode_config: a remote MCP server is an
+# object carrying "type": "remote". Deliberately not a parse — this must not disagree with OpenCode
+# about valid-but-unusual formatting and warn about a config that actually works.
+_mcp_declares_remote() {
+    grep -qE '"type"[[:space:]]*:[[:space:]]*"remote"' "$1" 2>/dev/null
+}
+
+_mcp_declares_client_id() {
+    grep -qE '"client[Ii]d"[[:space:]]*:' "$1" 2>/dev/null
+}
+
+# First remote server URL found across the layers; enough to fetch metadata from its origin.
+_mcp_first_remote_url() {
+    local f
+    for f in "$@"; do
+        _mcp_declares_remote "$f" || continue
+        grep -oE '"url"[[:space:]]*:[[:space:]]*"https?://[^"]+"' "$f" 2>/dev/null \
+            | head -1 | grep -oE 'https?://[^"]+' && return 0
+    done
+    return 1
+}
+
+# 0 = the authorization server advertises NO registration_endpoint (so a client id must be issued
+# out of band), 1 = it does advertise one, 2 = could not tell (offline, no curl, no metadata).
+# This is the check that would have replaced a multi-hour diagnosis with one printed line.
+_mcp_as_lacks_dcr() {
+    local url="$1" origin meta
+    command -v curl >/dev/null 2>&1 || return 2
+    origin=$(printf '%s' "$url" | grep -oE '^https?://[^/]+') || return 2
+    [[ -n "$origin" ]] || return 2
+    meta=$(curl -fsS --max-time 6 "$origin/.well-known/oauth-authorization-server" 2>/dev/null) || return 2
+    [[ -n "$meta" ]] || return 2
+    printf '%s' "$meta" | grep -q '"registration_endpoint"' && return 1
+    return 0
+}
+
+nyia_mcp_auth_config_preflight() {
+    local project_path="${1:-$(pwd)}" server_name="${2:-}"
+    local layers=() f
+    while IFS= read -r f; do [[ -n "$f" ]] && layers+=("$f"); done < <(_mcp_config_layers "$project_path")
+
+    # (a) LOUD: an unparseable layer is ignored silently by OpenCode, which looks exactly like
+    # "nothing configured" — the single most misleading failure on this path.
+    for f in "${layers[@]}"; do
+        [[ "$f" == *.jsonc ]] && continue   # comments are legal there; a strict parse would cry wolf
+        # `cmd; [[ $? -eq 1 ]]` is the shape that has aborted harnesses in this repo under errexit;
+        # capture the status in a condition context instead.
+        local parse_rc=0
+        _mcp_json_parses "$f" || parse_rc=$?
+        if [[ $parse_rc -eq 1 ]]; then
+            print_error "$(basename "$f") is not valid JSON — OpenCode will IGNORE it silently." >&2
+            print_error "  Path: $f" >&2
+            print_error "  That looks identical to having configured nothing at all, so fix this first." >&2
+        fi
+    done
+
+    # (b) No remote server declared anywhere in the project layers.
+    local any_remote=false
+    for f in "${layers[@]}"; do _mcp_declares_remote "$f" && any_remote=true; done
+    if [[ "$any_remote" != "true" ]]; then
+        _mcp_print_config_example "$server_name" >&2
+        return 0
+    fi
+
+    # (c) A remote server IS declared. If no clientId is set and the server offers no dynamic
+    # registration, authentication cannot succeed and nothing in the flow will say why.
+    local has_cid=false
+    for f in "${layers[@]}"; do _mcp_declares_client_id "$f" && has_cid=true; done
+    [[ "$has_cid" == "true" ]] && return 0
+
+    local url; url=$(_mcp_first_remote_url "${layers[@]}") || return 0
+    [[ -n "$url" ]] || return 0
+    if _mcp_as_lacks_dcr "$url"; then   # 0 = no registration_endpoint advertised
+        print_warning "$(printf '%s' "$url" | grep -oE '^https?://[^/]+') offers no dynamic client registration," >&2
+        print_warning "  and your config sets no clientId — so this authentication cannot succeed yet." >&2
+        print_warning "  Ask whoever operates that server for an OAuth client ID (and a client secret" >&2
+        print_warning "  only if they say the client is confidential), and ask them to register this" >&2
+        print_warning "  redirect URI: $MCP_OAUTH_CALLBACK_URI" >&2
+        print_warning "  Then add it under the server's \"oauth\" key. Continuing anyway." >&2
+    fi
+    return 0
+}
+
+# The example MUST be a complete document. OpenCode's own hint prints a bare "mcp": {...} fragment,
+# and pasting that literally is what produced an invalid config in the first place (Plan 358,
+# D-20261004-UPSTREAM-HINT). `opencode mcp add --url` is offered first because it writes valid JSON
+# and avoids hand-authoring altogether.
+_mcp_print_config_example() {
+    local name="${1:-my-server}"
+    print_warning "No remote MCP server is declared in this project's OpenCode config."
+    print_warning "  Easiest fix, inside the box — it writes valid JSON for you:"
+    print_warning "    opencode mcp add --url https://example.com/mcp $name"
+    print_warning "  Or write ./opencode.json as a COMPLETE document (not just the \"mcp\" fragment):"
+    print_warning '    {'
+    print_warning '      "$schema": "https://opencode.ai/config.json",'
+    print_warning '      "mcp": {'
+    print_warning "        \"$name\": {"
+    print_warning '          "type": "remote",'
+    print_warning '          "url": "https://example.com/mcp",'
+    print_warning '          "enabled": true'
+    print_warning '        }'
+    print_warning '      }'
+    print_warning '    }'
+    print_warning "  Check the URL first: a GET returning 405 with 'Allow: POST' is the MCP endpoint;"
+    print_warning "  404 means the path is wrong. Some servers mount it at the origin, not at /mcp."
     return 0
 }
 
